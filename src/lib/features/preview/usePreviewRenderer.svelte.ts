@@ -1,9 +1,16 @@
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { Application, Assets, Container, Sprite, Texture } from 'pixi.js';
+import { Application, Assets, Container, Graphics, Sprite, Texture } from 'pixi.js';
 import type { CropRect } from '$lib/utils/crop';
 
 type MediaKind = 'video' | 'audio' | 'image';
 const MAX_PREVIEW_DPR = 2;
+const DEFAULT_PREVIEW_ZOOM = 1;
+const MIN_PREVIEW_ZOOM = 0.25;
+const MAX_PREVIEW_ZOOM = 8;
+const PREVIEW_ZOOM_STEP = 1.18;
+const PREVIEW_PAN_OVERSCROLL = 2;
+const PREVIEW_TRANSFORM_LERP = 0.2;
+const PREVIEW_TRANSFORM_EPSILON = 0.01;
 
 interface PreviewPresentationState {
 	mediaKind: MediaKind;
@@ -16,9 +23,23 @@ interface PreviewPresentationState {
 	sourceHeight?: number;
 }
 
+interface PreviewTransform {
+	zoom: number;
+	offsetX: number;
+	offsetY: number;
+}
+
 function getPreviewResolution(): number {
 	if (typeof window === 'undefined') return 1;
 	return Math.max(1, Math.min(window.devicePixelRatio || 1, MAX_PREVIEW_DPR));
+}
+
+function clampValue(value: number, min: number, max: number): number {
+	return Math.max(min, Math.min(max, value));
+}
+
+function defaultPreviewTransform(): PreviewTransform {
+	return { zoom: DEFAULT_PREVIEW_ZOOM, offsetX: 0, offsetY: 0 };
 }
 
 export function createPreviewRenderer() {
@@ -30,6 +51,7 @@ export function createPreviewRenderer() {
 	let rotationContainer = $state<Container | null>(null);
 	let flipContainer = $state<Container | null>(null);
 	let sprite = $state<Sprite | null>(null);
+	let cropMask = $state<Graphics | null>(null);
 	let resizeObserver = $state<ResizeObserver | null>(null);
 	let texture = $state<Texture | null>(null);
 	let mediaElement = $state<HTMLVideoElement | undefined>();
@@ -40,6 +62,9 @@ export function createPreviewRenderer() {
 	let naturalHeight = $state(0);
 	let wrapperWidth = $state(0);
 	let wrapperHeight = $state(0);
+	let previewTransform = $state<PreviewTransform>(defaultPreviewTransform());
+	let renderedPreviewTransform: PreviewTransform = defaultPreviewTransform();
+	let previewTransformFrame = 0;
 	let presentation = $state<PreviewPresentationState>({
 		mediaKind: 'video',
 		rotation: '0',
@@ -74,18 +99,21 @@ export function createPreviewRenderer() {
 			const nextRotationContainer = new Container();
 			const nextFlipContainer = new Container();
 			const nextSprite = new Sprite();
+			const nextCropMask = new Graphics();
 			nextSprite.anchor.set(0.5);
 			nextSprite.visible = false;
 			nextFlipContainer.addChild(nextSprite);
 			nextRotationContainer.addChild(nextFlipContainer);
 			nextContainer.addChild(nextRotationContainer);
 			nextApp.stage.addChild(nextContainer);
+			nextApp.stage.addChild(nextCropMask);
 
 			app = nextApp;
 			spriteContainer = nextContainer;
 			rotationContainer = nextRotationContainer;
 			flipContainer = nextFlipContainer;
 			sprite = nextSprite;
+			cropMask = nextCropMask;
 			updateScene();
 		})();
 
@@ -123,6 +151,71 @@ export function createPreviewRenderer() {
 			sprite.texture = Texture.EMPTY;
 			sprite.visible = false;
 		}
+	}
+
+	function stopPreviewTransformAnimation() {
+		if (!previewTransformFrame) return;
+		window.cancelAnimationFrame(previewTransformFrame);
+		previewTransformFrame = 0;
+	}
+
+	function isPreviewTransformSettled() {
+		return (
+			Math.abs(renderedPreviewTransform.zoom - previewTransform.zoom) <
+				PREVIEW_TRANSFORM_EPSILON / 100 &&
+			Math.abs(renderedPreviewTransform.offsetX - previewTransform.offsetX) <
+				PREVIEW_TRANSFORM_EPSILON &&
+			Math.abs(renderedPreviewTransform.offsetY - previewTransform.offsetY) <
+				PREVIEW_TRANSFORM_EPSILON
+		);
+	}
+
+	function startPreviewTransformAnimation() {
+		if (previewTransformFrame) return;
+
+		const tick = () => {
+			previewTransformFrame = 0;
+
+			renderedPreviewTransform = {
+				zoom:
+					renderedPreviewTransform.zoom +
+					(previewTransform.zoom - renderedPreviewTransform.zoom) * PREVIEW_TRANSFORM_LERP,
+				offsetX:
+					renderedPreviewTransform.offsetX +
+					(previewTransform.offsetX - renderedPreviewTransform.offsetX) * PREVIEW_TRANSFORM_LERP,
+				offsetY:
+					renderedPreviewTransform.offsetY +
+					(previewTransform.offsetY - renderedPreviewTransform.offsetY) * PREVIEW_TRANSFORM_LERP
+			};
+
+			if (isPreviewTransformSettled()) {
+				renderedPreviewTransform = previewTransform;
+				updateScene();
+				return;
+			}
+
+			updateScene();
+			previewTransformFrame = window.requestAnimationFrame(tick);
+		};
+
+		previewTransformFrame = window.requestAnimationFrame(tick);
+	}
+
+	function applyPreviewTransform(nextTransform: PreviewTransform, immediate = false) {
+		previewTransform = clampPreviewTransform(nextTransform);
+
+		if (immediate) {
+			stopPreviewTransformAnimation();
+			renderedPreviewTransform = previewTransform;
+			updateScene();
+			return;
+		}
+
+		startPreviewTransformAnimation();
+	}
+
+	function resetPreviewTransform(immediate = false) {
+		applyPreviewTransform(defaultPreviewTransform(), immediate);
 	}
 
 	function syncNaturalDimensions() {
@@ -256,6 +349,7 @@ export function createPreviewRenderer() {
 
 		if (mediaKind === 'audio') {
 			await clearTexture();
+			resetPreviewTransform(true);
 			return;
 		}
 
@@ -266,6 +360,7 @@ export function createPreviewRenderer() {
 		if (currentAssetUrl === assetUrl && texture) return;
 
 		await clearTexture();
+		resetPreviewTransform(true);
 		if (requestId !== sourceRequestId) return;
 
 		const loaded = await Assets.load({
@@ -289,6 +384,21 @@ export function createPreviewRenderer() {
 	}
 
 	function setPresentationState(nextPresentation: PreviewPresentationState) {
+		const shouldResetView =
+			presentation.mediaKind !== nextPresentation.mediaKind ||
+			presentation.rotation !== nextPresentation.rotation ||
+			presentation.flipHorizontal !== nextPresentation.flipHorizontal ||
+			presentation.flipVertical !== nextPresentation.flipVertical ||
+			presentation.appliedCrop !== nextPresentation.appliedCrop ||
+			presentation.sourceWidth !== nextPresentation.sourceWidth ||
+			presentation.sourceHeight !== nextPresentation.sourceHeight;
+
+		if (shouldResetView) {
+			previewTransform = defaultPreviewTransform();
+			renderedPreviewTransform = defaultPreviewTransform();
+			stopPreviewTransformAnimation();
+		}
+
 		presentation = nextPresentation;
 		syncNaturalDimensions();
 		updateScene();
@@ -312,7 +422,11 @@ export function createPreviewRenderer() {
 			wrapperWidth = rect.width;
 			wrapperHeight = rect.height;
 			if (app) {
-				app.renderer.resize(Math.max(1, rect.width), Math.max(1, rect.height), getPreviewResolution());
+				app.renderer.resize(
+					Math.max(1, rect.width),
+					Math.max(1, rect.height),
+					getPreviewResolution()
+				);
 			}
 			updateScene();
 		};
@@ -323,13 +437,10 @@ export function createPreviewRenderer() {
 		void ensureApp();
 	}
 
-	function updateScene() {
-		if (!app || !spriteContainer || !rotationContainer || !flipContainer || !sprite || !texture)
-			return;
-
+	function getSceneMetrics(zoom = previewTransform.zoom) {
 		const baseWidth = presentation.sourceWidth ?? naturalWidth;
 		const baseHeight = presentation.sourceHeight ?? naturalHeight;
-		if (!baseWidth || !baseHeight || !wrapperWidth || !wrapperHeight) return;
+		if (!baseWidth || !baseHeight || !wrapperWidth || !wrapperHeight) return null;
 
 		const cropRect =
 			!presentation.cropMode && presentation.appliedCrop
@@ -341,29 +452,185 @@ export function createPreviewRenderer() {
 		const sideRotation = presentation.rotation === '90' || presentation.rotation === '270';
 		const visualWidth = sideRotation ? contentHeight : contentWidth;
 		const visualHeight = sideRotation ? contentWidth : contentHeight;
-		const scale = Math.min(wrapperWidth / visualWidth, wrapperHeight / visualHeight);
+		const fitScale = Math.min(wrapperWidth / visualWidth, wrapperHeight / visualHeight);
 		const cropCenterX = cropRect.x + cropRect.width / 2 - 0.5;
 		const cropCenterY = cropRect.y + cropRect.height / 2 - 0.5;
 
+		return {
+			baseWidth,
+			baseHeight,
+			cropCenterX,
+			cropCenterY,
+			fitScale,
+			displayedWidth: visualWidth * fitScale * zoom,
+			displayedHeight: visualHeight * fitScale * zoom
+		};
+	}
+
+	function clampPreviewTransform(transform: PreviewTransform): PreviewTransform {
+		const zoom = clampValue(transform.zoom, MIN_PREVIEW_ZOOM, MAX_PREVIEW_ZOOM);
+		const metrics = getSceneMetrics(zoom);
+
+		if (!metrics || presentation.cropMode) {
+			return { zoom: DEFAULT_PREVIEW_ZOOM, offsetX: 0, offsetY: 0 };
+		}
+
+		const maxOffsetX = Math.max(wrapperWidth * PREVIEW_PAN_OVERSCROLL, metrics.displayedWidth) / 2;
+		const maxOffsetY =
+			Math.max(wrapperHeight * PREVIEW_PAN_OVERSCROLL, metrics.displayedHeight) / 2;
+
+		return {
+			zoom,
+			offsetX: clampValue(transform.offsetX, -maxOffsetX, maxOffsetX),
+			offsetY: clampValue(transform.offsetY, -maxOffsetY, maxOffsetY)
+		};
+	}
+
+	function setPreviewTransform(nextTransform: PreviewTransform) {
+		applyPreviewTransform(nextTransform);
+	}
+
+	function zoomPreviewAt(clientX: number, clientY: number, deltaY: number) {
+		if (!wrapperElement || presentation.cropMode) return;
+
+		const rect = wrapperElement.getBoundingClientRect();
+		if (
+			clientX < rect.left ||
+			clientX > rect.right ||
+			clientY < rect.top ||
+			clientY > rect.bottom
+		) {
+			return;
+		}
+
+		const oldZoom = previewTransform.zoom;
+		const nextZoom = clampValue(
+			oldZoom * (deltaY < 0 ? PREVIEW_ZOOM_STEP : 1 / PREVIEW_ZOOM_STEP),
+			MIN_PREVIEW_ZOOM,
+			MAX_PREVIEW_ZOOM
+		);
+
+		if (nextZoom === oldZoom) return;
+
+		const ratio = nextZoom / oldZoom;
+		const pointerX = clientX - rect.left - wrapperWidth / 2;
+		const pointerY = clientY - rect.top - wrapperHeight / 2;
+
+		setPreviewTransform({
+			zoom: nextZoom,
+			offsetX: pointerX - (pointerX - previewTransform.offsetX) * ratio,
+			offsetY: pointerY - (pointerY - previewTransform.offsetY) * ratio
+		});
+	}
+
+	function zoomPreviewBy(direction: 1 | -1) {
+		if (presentation.cropMode) return;
+
+		const oldZoom = previewTransform.zoom;
+		const nextZoom = clampValue(
+			oldZoom * (direction > 0 ? PREVIEW_ZOOM_STEP : 1 / PREVIEW_ZOOM_STEP),
+			MIN_PREVIEW_ZOOM,
+			MAX_PREVIEW_ZOOM
+		);
+		const ratio = nextZoom / oldZoom;
+
+		setPreviewTransform({
+			zoom: nextZoom,
+			offsetX: previewTransform.offsetX * ratio,
+			offsetY: previewTransform.offsetY * ratio
+		});
+	}
+
+	function panPreviewBy(deltaX: number, deltaY: number) {
+		if (presentation.cropMode) return;
+
+		setPreviewTransform({
+			zoom: previewTransform.zoom,
+			offsetX: previewTransform.offsetX + deltaX,
+			offsetY: previewTransform.offsetY + deltaY
+		});
+	}
+
+	function updateScene() {
+		if (
+			!app ||
+			!spriteContainer ||
+			!rotationContainer ||
+			!flipContainer ||
+			!sprite ||
+			!texture ||
+			!cropMask
+		)
+			return;
+
+		const effectiveTransform = presentation.cropMode
+			? defaultPreviewTransform()
+			: clampPreviewTransform(previewTransform);
+		if (
+			!presentation.cropMode &&
+			(effectiveTransform.zoom !== previewTransform.zoom ||
+				effectiveTransform.offsetX !== previewTransform.offsetX ||
+				effectiveTransform.offsetY !== previewTransform.offsetY)
+		) {
+			previewTransform = effectiveTransform;
+		}
+
+		if (presentation.cropMode) {
+			renderedPreviewTransform = defaultPreviewTransform();
+		} else {
+			renderedPreviewTransform = clampPreviewTransform(renderedPreviewTransform);
+		}
+
+		const renderTransform = presentation.cropMode
+			? defaultPreviewTransform()
+			: renderedPreviewTransform;
+		const metrics = getSceneMetrics(renderTransform.zoom);
+		if (!metrics) return;
+
 		sprite.texture = texture;
-		sprite.width = baseWidth;
-		sprite.height = baseHeight;
-		sprite.position.set(-(cropCenterX * baseWidth), -(cropCenterY * baseHeight));
+		sprite.width = metrics.baseWidth;
+		sprite.height = metrics.baseHeight;
+		sprite.position.set(
+			-(metrics.cropCenterX * metrics.baseWidth),
+			-(metrics.cropCenterY * metrics.baseHeight)
+		);
 		sprite.visible = true;
 
-		spriteContainer.position.set(wrapperWidth / 2, wrapperHeight / 2);
-		spriteContainer.scale.set(scale, scale);
+		spriteContainer.position.set(
+			wrapperWidth / 2 + renderTransform.offsetX,
+			wrapperHeight / 2 + renderTransform.offsetY
+		);
+		spriteContainer.scale.set(
+			metrics.fitScale * renderTransform.zoom,
+			metrics.fitScale * renderTransform.zoom
+		);
 		rotationContainer.rotation = (Number(presentation.rotation) * Math.PI) / 180;
 		flipContainer.scale.set(
 			presentation.flipHorizontal ? -1 : 1,
 			presentation.flipVertical ? -1 : 1
 		);
 
+		cropMask.clear();
+		if (!presentation.cropMode && presentation.appliedCrop) {
+			cropMask
+				.rect(
+					wrapperWidth / 2 + renderTransform.offsetX - metrics.displayedWidth / 2,
+					wrapperHeight / 2 + renderTransform.offsetY - metrics.displayedHeight / 2,
+					metrics.displayedWidth,
+					metrics.displayedHeight
+				)
+				.fill(0xffffff);
+			spriteContainer.mask = cropMask;
+		} else {
+			spriteContainer.mask = null;
+		}
+
 		app.render();
 	}
 
 	function destroy() {
 		sourceRequestId += 1;
+		stopPreviewTransformAnimation();
 		resizeObserver?.disconnect();
 		void clearTexture();
 		app?.destroy(true, { children: true, texture: true });
@@ -372,6 +639,7 @@ export function createPreviewRenderer() {
 		rotationContainer = null;
 		flipContainer = null;
 		sprite = null;
+		cropMask = null;
 	}
 
 	return {
@@ -384,10 +652,24 @@ export function createPreviewRenderer() {
 		get naturalHeight() {
 			return naturalHeight;
 		},
+		get previewZoom() {
+			return previewTransform.zoom;
+		},
+		get hasPreviewTransform() {
+			return (
+				previewTransform.zoom !== DEFAULT_PREVIEW_ZOOM ||
+				previewTransform.offsetX !== 0 ||
+				previewTransform.offsetY !== 0
+			);
+		},
 		setCanvasElement,
 		setWrapperElement,
 		setSource,
 		setPresentationState,
+		zoomPreviewAt,
+		zoomPreviewBy,
+		panPreviewBy,
+		resetPreviewTransform,
 		destroy
 	};
 }

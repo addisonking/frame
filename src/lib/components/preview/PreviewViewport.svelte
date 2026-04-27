@@ -3,9 +3,11 @@
 	import { fade } from 'svelte/transition';
 	import { convertFileSrc } from '@tauri-apps/api/core';
 	import { IconPlay, IconPause2 } from '$lib/icons';
+	import { cn } from '$lib/utils/cn';
 	import CropOverlay from './CropOverlay.svelte';
 	import CropAspectBar from './CropAspectBar.svelte';
 	import PreviewToolbar from './PreviewToolbar.svelte';
+	import PreviewZoomToolbar from './PreviewZoomToolbar.svelte';
 	import type {
 		PreviewCropController,
 		PreviewPlaybackController,
@@ -34,13 +36,20 @@
 
 	let containerRef = $state<HTMLDivElement | undefined>();
 	let wrapperRef = $state<HTMLDivElement | undefined>();
+	let cropFrameRef = $state<HTMLDivElement | undefined>();
 	let canvasRef = $state<HTMLCanvasElement | undefined>();
 	let audioRef = $state<HTMLAudioElement | undefined>();
 	let isHovering = $state(false);
+	let isPanningPreview = $state(false);
+	let panPointerId: number | null = null;
+	let lastPanX = 0;
+	let lastPanY = 0;
+	let suppressPreviewClick = false;
 
 	const isImage = $derived(mediaKind === 'image');
 	const isAudio = $derived(mediaKind === 'audio');
 	const audioSrc = $derived(convertFileSrc(filePath));
+	const canNavigatePreview = $derived(!isAudio && !crop.cropMode);
 
 	$effect(() => {
 		untrack(() => {
@@ -72,16 +81,16 @@
 	});
 
 	$effect(() => {
-		if (!wrapperRef) return;
+		if (!cropFrameRef) return;
 
 		const updateBounds = () => {
-			if (!wrapperRef) return;
-			const rect = wrapperRef.getBoundingClientRect();
+			if (!cropFrameRef) return;
+			const rect = cropFrameRef.getBoundingClientRect();
 			crop.setVideoBounds(rect.width, rect.height);
 		};
 
 		const observer = new ResizeObserver(updateBounds);
-		observer.observe(wrapperRef);
+		observer.observe(cropFrameRef);
 		updateBounds();
 		window.addEventListener('resize', updateBounds);
 
@@ -90,12 +99,64 @@
 			window.removeEventListener('resize', updateBounds);
 		};
 	});
+
+	function handlePreviewClick(event: MouseEvent) {
+		if (suppressPreviewClick) {
+			suppressPreviewClick = false;
+			event.stopPropagation();
+			return;
+		}
+
+		if (!isImage && !crop.cropMode) {
+			playback.togglePlay();
+		}
+	}
+
+	function handlePreviewWheel(event: WheelEvent) {
+		if (!canNavigatePreview) return;
+
+		event.preventDefault();
+		event.stopPropagation();
+		renderer.zoomPreviewAt(event.clientX, event.clientY, event.deltaY);
+	}
+
+	function beginPreviewPan(event: PointerEvent) {
+		if (!canNavigatePreview || !renderer.hasPreviewTransform || event.button !== 0) return;
+
+		event.preventDefault();
+		event.stopPropagation();
+		suppressPreviewClick = true;
+		isPanningPreview = true;
+		panPointerId = event.pointerId;
+		lastPanX = event.clientX;
+		lastPanY = event.clientY;
+		(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+	}
+
+	function handlePreviewPan(event: PointerEvent) {
+		if (!isPanningPreview || panPointerId !== event.pointerId) return;
+
+		const deltaX = event.clientX - lastPanX;
+		const deltaY = event.clientY - lastPanY;
+		lastPanX = event.clientX;
+		lastPanY = event.clientY;
+		renderer.panPreviewBy(deltaX, deltaY);
+	}
+
+	function endPreviewPan(event: PointerEvent) {
+		if (!isPanningPreview || panPointerId !== event.pointerId) return;
+
+		isPanningPreview = false;
+		panPointerId = null;
+		(event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
+	}
 </script>
 
 <div
 	class="input-highlight relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-md bg-black"
 	bind:this={containerRef}
-	onclick={() => !isImage && !crop.cropMode && playback.togglePlay()}
+	onclick={handlePreviewClick}
+	onwheel={handlePreviewWheel}
 	onmouseenter={() => (isHovering = true)}
 	onmouseleave={() => (isHovering = false)}
 	role="presentation"
@@ -104,19 +165,39 @@
 		<audio bind:this={audioRef} src={audioSrc} class="hidden"></audio>
 	{:else}
 		<div
-			class="relative inline-flex max-h-full max-w-full overflow-hidden"
+			class={cn(
+				'absolute inset-0 overflow-hidden',
+				canNavigatePreview && renderer.hasPreviewTransform && 'cursor-grab active:cursor-grabbing'
+			)}
 			bind:this={wrapperRef}
-			style={crop.videoStyle}
+			onpointerdown={beginPreviewPan}
+			onpointermove={handlePreviewPan}
+			onpointerup={endPreviewPan}
+			onpointercancel={endPreviewPan}
+			ondblclick={(event) => {
+				if (!canNavigatePreview || !renderer.hasPreviewTransform) return;
+				event.preventDefault();
+				event.stopPropagation();
+				suppressPreviewClick = true;
+				renderer.resetPreviewTransform();
+			}}
+			role="presentation"
 		>
-			<canvas bind:this={canvasRef} class="block h-full w-full bg-black"></canvas>
+			<canvas bind:this={canvasRef} class="absolute inset-0 block h-full w-full bg-black"></canvas>
 
-			{#if crop.cropMode && crop.draftCrop}
-				<CropOverlay
-					draftCrop={crop.draftCrop}
-					isSideRotation={crop.isSideRotation}
-					onBeginCropDrag={crop.beginCropDrag}
-				/>
-			{/if}
+			<div
+				class="absolute top-1/2 left-1/2 max-h-full max-w-full -translate-x-1/2 -translate-y-1/2 overflow-visible"
+				bind:this={cropFrameRef}
+				style={crop.videoStyle}
+			>
+				{#if crop.cropMode && crop.draftCrop}
+					<CropOverlay
+						draftCrop={crop.draftCrop}
+						isSideRotation={crop.isSideRotation}
+						onBeginCropDrag={crop.beginCropDrag}
+					/>
+				{/if}
+			</div>
 		</div>
 	{/if}
 
@@ -142,9 +223,15 @@
 		onToggleCrop={crop.toggleCropMode}
 	/>
 
+	<PreviewZoomToolbar
+		disabled={!canNavigatePreview}
+		onZoomIn={() => renderer.zoomPreviewBy(1)}
+		onZoomOut={() => renderer.zoomPreviewBy(-1)}
+	/>
+
 	{#if !isImage && !crop.cropMode && (!playback.isPlaying || isHovering)}
 		<div
-			class="absolute inset-0 z-10 flex items-center justify-center"
+			class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
 			onclick={(event) => {
 				event.stopPropagation();
 				playback.togglePlay();
@@ -153,7 +240,7 @@
 		>
 			<div class="absolute inset-0 bg-background/40" transition:fade={{ duration: 100 }}></div>
 			<div
-				class="relative flex size-16 items-center justify-center rounded-full bg-frame-gray-200 text-foreground shadow-sm backdrop-blur-md"
+				class="pointer-events-auto relative flex size-16 items-center justify-center rounded-full bg-frame-gray-200 text-foreground shadow-sm backdrop-blur-md"
 				style="transform-origin: center; will-change: opacity; transform: translateZ(0);"
 				transition:fade={{ duration: 100 }}
 			>

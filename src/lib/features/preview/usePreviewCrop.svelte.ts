@@ -291,8 +291,8 @@ export function createPreviewCrop({
 			normalizedDx,
 			normalizedDy,
 			getRotation(),
-			getFlipHorizontal(),
-			getFlipVertical()
+			false,
+			false
 		);
 
 		const startRect = cropDragOrigin.startRect;
