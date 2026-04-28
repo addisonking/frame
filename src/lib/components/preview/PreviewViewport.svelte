@@ -5,6 +5,7 @@
 	import CropAspectBar from './CropAspectBar.svelte';
 	import PreviewToolbar from './PreviewToolbar.svelte';
 	import PreviewZoomToolbar from './PreviewZoomToolbar.svelte';
+	import { IconSpinner } from '$lib/icons';
 	import type {
 		PreviewCropController,
 		PreviewPlaybackController,
@@ -155,9 +156,7 @@
 	role="presentation"
 >
 	{#if mediaKind === 'unknown'}
-		<div
-			class="h-6 w-6 animate-spin rounded-full border border-frame-gray-600 border-t-transparent"
-		></div>
+		<IconSpinner size={24} class="animate-spin text-frame-gray-600" />
 	{:else if isAudio}
 		<audio bind:this={audioRef} src={audioSrc} class="hidden"></audio>
 	{:else}
@@ -191,9 +190,7 @@
 		<div
 			class="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-black/20"
 		>
-			<div
-				class="h-6 w-6 animate-spin rounded-full border border-frame-gray-600 border-t-transparent"
-			></div>
+			<IconSpinner size={24} class="animate-spin text-frame-gray-600" />
 		</div>
 	{:else if renderer.error}
 		<div
