@@ -9,6 +9,7 @@ export interface PreviewPresentationState {
 	flipVertical: boolean;
 	cropMode: boolean;
 	appliedCrop: CropRect | null;
+	draftCrop: CropRect | null;
 	sourceWidth?: number;
 	sourceHeight?: number;
 }

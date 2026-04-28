@@ -7,6 +7,7 @@ export interface PreviewPixiScene {
 	flipContainer: Container;
 	sprite: Sprite;
 	cropMask: Graphics;
+	cropOverlay: Graphics;
 }
 
 export async function createPreviewPixiScene(
@@ -33,11 +34,13 @@ export async function createPreviewPixiScene(
 	const flipContainer = new Container();
 	const sprite = new Sprite();
 	const cropMask = new Graphics();
+	const cropOverlay = new Graphics();
 	sprite.anchor.set(0.5);
 	sprite.visible = false;
 	flipContainer.addChild(sprite);
 	rotationContainer.addChild(flipContainer);
 	spriteContainer.addChild(rotationContainer);
+	spriteContainer.addChild(cropOverlay);
 	app.stage.addChild(spriteContainer);
 	app.stage.addChild(cropMask);
 
@@ -47,6 +50,7 @@ export async function createPreviewPixiScene(
 		rotationContainer,
 		flipContainer,
 		sprite,
-		cropMask
+		cropMask,
+		cropOverlay
 	};
 }

@@ -20,6 +20,18 @@ import type {
 	PreviewSource,
 	PreviewTransform
 } from './previewTypes';
+import { getHandleCursor, type DragHandle } from '$lib/utils/crop';
+
+const CROP_BORDER_SCREEN_WIDTH = 1.25;
+const CROP_GUIDE_SCREEN_WIDTH = 1;
+const CROP_HANDLE_SCREEN_RADIUS = 5.5;
+const CROP_HIT_SCREEN_RADIUS = 12;
+
+interface CropPointerTarget {
+	handle: DragHandle;
+	point: { x: number; y: number };
+	cursor: string;
+}
 
 export function createPreviewRenderer() {
 	let canvasElement = $state<HTMLCanvasElement | undefined>();
@@ -31,6 +43,7 @@ export function createPreviewRenderer() {
 	let flipContainer = $state<Container | null>(null);
 	let sprite = $state<Sprite | null>(null);
 	let cropMask = $state<Graphics | null>(null);
+	let cropOverlay = $state<Graphics | null>(null);
 	let resizeObserver = $state<ResizeObserver | null>(null);
 	let texture = $state<Texture | null>(null);
 	let mediaElement = $state<HTMLVideoElement | undefined>();
@@ -53,7 +66,8 @@ export function createPreviewRenderer() {
 		flipHorizontal: false,
 		flipVertical: false,
 		cropMode: false,
-		appliedCrop: null
+		appliedCrop: null,
+		draftCrop: null
 	});
 
 	function getSceneState() {
@@ -99,6 +113,7 @@ export function createPreviewRenderer() {
 			flipContainer = scene.flipContainer;
 			sprite = scene.sprite;
 			cropMask = scene.cropMask;
+			cropOverlay = scene.cropOverlay;
 			resizeAppToWrapper();
 			updateScene();
 		})();
@@ -135,6 +150,9 @@ export function createPreviewRenderer() {
 			sprite.texture = Texture.EMPTY;
 			sprite.visible = false;
 		}
+
+		cropMask?.clear();
+		cropOverlay?.clear();
 	}
 
 	function getErrorMessage(cause: unknown) {
@@ -403,10 +421,6 @@ export function createPreviewRenderer() {
 	function setPresentationState(nextPresentation: PreviewPresentationState) {
 		const shouldResetView =
 			presentation.mediaKind !== nextPresentation.mediaKind ||
-			presentation.rotation !== nextPresentation.rotation ||
-			presentation.flipHorizontal !== nextPresentation.flipHorizontal ||
-			presentation.flipVertical !== nextPresentation.flipVertical ||
-			presentation.appliedCrop !== nextPresentation.appliedCrop ||
 			presentation.sourceWidth !== nextPresentation.sourceWidth ||
 			presentation.sourceHeight !== nextPresentation.sourceHeight;
 
@@ -456,7 +470,7 @@ export function createPreviewRenderer() {
 	}
 
 	function zoomPreviewAt(clientX: number, clientY: number, deltaY: number) {
-		if (!wrapperElement || presentation.cropMode) return;
+		if (!wrapperElement) return;
 
 		const rect = wrapperElement.getBoundingClientRect();
 		if (
@@ -489,8 +503,6 @@ export function createPreviewRenderer() {
 	}
 
 	function zoomPreviewBy(direction: 1 | -1) {
-		if (presentation.cropMode) return;
-
 		const oldZoom = previewTransform.zoom;
 		const nextZoom = clampValue(
 			oldZoom * (direction > 0 ? PREVIEW_ZOOM_STEP : 1 / PREVIEW_ZOOM_STEP),
@@ -507,13 +519,198 @@ export function createPreviewRenderer() {
 	}
 
 	function panPreviewBy(deltaX: number, deltaY: number) {
-		if (presentation.cropMode) return;
-
 		setPreviewTransform({
 			zoom: previewTransform.zoom,
 			offsetX: previewTransform.offsetX + deltaX,
 			offsetY: previewTransform.offsetY + deltaY
 		});
+	}
+
+	function getRenderTransform() {
+		return renderedPreviewTransform;
+	}
+
+	function getVisualDimensions() {
+		const baseWidth = presentation.sourceWidth ?? naturalWidth;
+		const baseHeight = presentation.sourceHeight ?? naturalHeight;
+		if (!baseWidth || !baseHeight) return null;
+
+		const sideRotation = presentation.rotation === '90' || presentation.rotation === '270';
+		return {
+			width: sideRotation ? baseHeight : baseWidth,
+			height: sideRotation ? baseWidth : baseHeight,
+			sideRotation
+		};
+	}
+
+	function getCropLocalPoint(clientX: number, clientY: number, allowOutside = false) {
+		if (!wrapperElement) return null;
+
+		const transform = getRenderTransform();
+		const metrics = getSceneMetrics(getSceneState(), transform.zoom);
+		if (!metrics) return null;
+
+		const rect = wrapperElement.getBoundingClientRect();
+		if (
+			!allowOutside &&
+			(clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom)
+		) {
+			return null;
+		}
+
+		const scale = metrics.fitScale * transform.zoom;
+		if (!scale) return null;
+
+		const visual = getVisualDimensions();
+		if (!visual) return null;
+
+		const localX = (clientX - rect.left - wrapperWidth / 2 - transform.offsetX) / scale;
+		const localY = (clientY - rect.top - wrapperHeight / 2 - transform.offsetY) / scale;
+
+		return {
+			localX,
+			localY,
+			scale,
+			visualWidth: visual.width,
+			visualHeight: visual.height,
+			sideRotation: visual.sideRotation,
+			point: {
+				x: clampValue((localX + visual.width / 2) / visual.width, 0, 1),
+				y: clampValue((localY + visual.height / 2) / visual.height, 0, 1)
+			}
+		};
+	}
+
+	function getCropPointerTarget(clientX: number, clientY: number): CropPointerTarget | null {
+		if (!presentation.cropMode || !presentation.draftCrop) return null;
+
+		const local = getCropLocalPoint(clientX, clientY);
+		if (!local) return null;
+
+		const { draftCrop } = presentation;
+		const left = (draftCrop.x - 0.5) * local.visualWidth;
+		const right = (draftCrop.x + draftCrop.width - 0.5) * local.visualWidth;
+		const top = (draftCrop.y - 0.5) * local.visualHeight;
+		const bottom = (draftCrop.y + draftCrop.height - 0.5) * local.visualHeight;
+		const centerX = (left + right) / 2;
+		const centerY = (top + bottom) / 2;
+		const threshold = CROP_HIT_SCREEN_RADIUS / local.scale;
+
+		const handles: Array<{ handle: DragHandle; x: number; y: number }> = [
+			{ handle: 'nw', x: left, y: top },
+			{ handle: 'n', x: centerX, y: top },
+			{ handle: 'ne', x: right, y: top },
+			{ handle: 'e', x: right, y: centerY },
+			{ handle: 'se', x: right, y: bottom },
+			{ handle: 's', x: centerX, y: bottom },
+			{ handle: 'sw', x: left, y: bottom },
+			{ handle: 'w', x: left, y: centerY }
+		];
+
+		for (const { handle, x, y } of handles) {
+			if (Math.hypot(local.localX - x, local.localY - y) <= threshold) {
+				return {
+					handle,
+					point: local.point,
+					cursor: getHandleCursor(handle, local.sideRotation)
+				};
+			}
+		}
+
+		const nearHorizontal =
+			local.localX >= left - threshold &&
+			local.localX <= right + threshold &&
+			(Math.abs(local.localY - top) <= threshold || Math.abs(local.localY - bottom) <= threshold);
+		const nearVertical =
+			local.localY >= top - threshold &&
+			local.localY <= bottom + threshold &&
+			(Math.abs(local.localX - left) <= threshold || Math.abs(local.localX - right) <= threshold);
+
+		if (nearHorizontal || nearVertical) {
+			return { handle: 'move', point: local.point, cursor: 'move' };
+		}
+
+		const inside =
+			local.localX >= left &&
+			local.localX <= right &&
+			local.localY >= top &&
+			local.localY <= bottom;
+
+		if (inside) {
+			return { handle: 'move', point: local.point, cursor: 'move' };
+		}
+
+		return null;
+	}
+
+	function getCropPoint(clientX: number, clientY: number) {
+		return getCropLocalPoint(clientX, clientY, true)?.point ?? null;
+	}
+
+	function drawCropOverlay(metrics: NonNullable<ReturnType<typeof getSceneMetrics>>) {
+		if (!cropOverlay) return;
+
+		cropOverlay.clear();
+		if (!presentation.cropMode || !presentation.draftCrop) return;
+
+		const visual = getVisualDimensions();
+		if (!visual) return;
+
+		const scale = metrics.fitScale * getRenderTransform().zoom;
+		if (!scale) return;
+
+		const { draftCrop } = presentation;
+		const left = (draftCrop.x - 0.5) * visual.width;
+		const top = (draftCrop.y - 0.5) * visual.height;
+		const width = draftCrop.width * visual.width;
+		const height = draftCrop.height * visual.height;
+		const right = left + width;
+		const bottom = top + height;
+		const minX = -visual.width / 2;
+		const minY = -visual.height / 2;
+		const lineWidth = CROP_BORDER_SCREEN_WIDTH / scale;
+		const guideWidth = CROP_GUIDE_SCREEN_WIDTH / scale;
+		const handleRadius = CROP_HANDLE_SCREEN_RADIUS / scale;
+
+		cropOverlay
+			.rect(minX, minY, visual.width, top - minY)
+			.rect(minX, top, left - minX, height)
+			.rect(right, top, minX + visual.width - right, height)
+			.rect(minX, bottom, visual.width, minY + visual.height - bottom)
+			.fill({ color: 0x000000, alpha: 0.55 });
+
+		cropOverlay
+			.rect(left, top, width, height)
+			.stroke({ color: 0xffffff, alpha: 0.9, width: lineWidth });
+
+		for (let index = 1; index <= 2; index += 1) {
+			const x = left + (width * index) / 3;
+			const y = top + (height * index) / 3;
+			cropOverlay
+				.moveTo(x, top)
+				.lineTo(x, bottom)
+				.moveTo(left, y)
+				.lineTo(right, y)
+				.stroke({ color: 0xffffff, alpha: 0.7, width: guideWidth });
+		}
+
+		const handlePoints = [
+			[left, top],
+			[left + width / 2, top],
+			[right, top],
+			[right, top + height / 2],
+			[right, bottom],
+			[left + width / 2, bottom],
+			[left, bottom],
+			[left, top + height / 2]
+		] as const;
+
+		for (const [x, y] of handlePoints) {
+			cropOverlay
+				.circle(x, y, handleRadius)
+				.fill(0xffffff)
+				.stroke({ color: 0x000000, alpha: 0.45, width: lineWidth });
+		}
 	}
 
 	function updateScene() {
@@ -524,31 +721,23 @@ export function createPreviewRenderer() {
 			!flipContainer ||
 			!sprite ||
 			!texture ||
-			!cropMask
+			!cropMask ||
+			!cropOverlay
 		)
 			return;
 
-		const effectiveTransform = presentation.cropMode
-			? defaultPreviewTransform()
-			: clampPreviewTransform(getSceneState(), previewTransform);
+		const effectiveTransform = clampPreviewTransform(getSceneState(), previewTransform);
 		if (
-			!presentation.cropMode &&
-			(effectiveTransform.zoom !== previewTransform.zoom ||
-				effectiveTransform.offsetX !== previewTransform.offsetX ||
-				effectiveTransform.offsetY !== previewTransform.offsetY)
+			effectiveTransform.zoom !== previewTransform.zoom ||
+			effectiveTransform.offsetX !== previewTransform.offsetX ||
+			effectiveTransform.offsetY !== previewTransform.offsetY
 		) {
 			previewTransform = effectiveTransform;
 		}
 
-		if (presentation.cropMode) {
-			renderedPreviewTransform = defaultPreviewTransform();
-		} else {
-			renderedPreviewTransform = clampPreviewTransform(getSceneState(), renderedPreviewTransform);
-		}
+		renderedPreviewTransform = clampPreviewTransform(getSceneState(), renderedPreviewTransform);
 
-		const renderTransform = presentation.cropMode
-			? defaultPreviewTransform()
-			: renderedPreviewTransform;
+		const renderTransform = renderedPreviewTransform;
 		const metrics = getSceneMetrics(getSceneState(), renderTransform.zoom);
 		if (!metrics) return;
 
@@ -590,6 +779,7 @@ export function createPreviewRenderer() {
 			spriteContainer.mask = null;
 		}
 
+		drawCropOverlay(metrics);
 		app.render();
 	}
 
@@ -605,6 +795,7 @@ export function createPreviewRenderer() {
 		flipContainer = null;
 		sprite = null;
 		cropMask = null;
+		cropOverlay = null;
 	}
 
 	return {
@@ -637,6 +828,8 @@ export function createPreviewRenderer() {
 		setWrapperElement,
 		setSource,
 		setPresentationState,
+		getCropPointerTarget,
+		getCropPoint,
 		zoomPreviewAt,
 		zoomPreviewBy,
 		panPreviewBy,

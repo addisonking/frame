@@ -31,9 +31,6 @@ export function createPreviewCrop({
 	getControlsDisabled,
 	onUpdateConfig
 }: PreviewCropOptions) {
-	let containerWidth = $state(0);
-	let containerHeight = $state(0);
-	let videoBounds = $state({ width: 0, height: 0 });
 	let naturalWidth = $state(0);
 	let naturalHeight = $state(0);
 
@@ -61,42 +58,6 @@ export function createPreviewCrop({
 		return true;
 	});
 
-	const videoStyle = $derived.by(() => {
-		if (!containerWidth || !containerHeight) {
-			return 'width: 100%; height: 100%;';
-		}
-
-		const baseW = getSourceWidth() ?? naturalWidth;
-		const baseH = getSourceHeight() ?? naturalHeight;
-
-		if (!baseW || !baseH) {
-			return 'width: 100%; height: auto;';
-		}
-
-		let targetRect = { x: 0, y: 0, width: 1, height: 1 };
-
-		if (!cropMode && appliedCrop) {
-			targetRect = appliedCrop;
-		}
-
-		const contentW = baseW * targetRect.width;
-		const contentH = baseH * targetRect.height;
-		const visualW = isSideRotation ? contentH : contentW;
-		const visualH = isSideRotation ? contentW : contentH;
-		const scale = Math.min(containerWidth / visualW, containerHeight / visualH);
-
-		return `width: ${visualW * scale}px; height: ${visualH * scale}px;`;
-	});
-
-	function setContainerSize(width: number, height: number) {
-		containerWidth = width;
-		containerHeight = height;
-	}
-
-	function setVideoBounds(width: number, height: number) {
-		videoBounds = { width, height };
-	}
-
 	function setNaturalDimensions(width: number, height: number) {
 		naturalWidth = width;
 		naturalHeight = height;
@@ -112,13 +73,7 @@ export function createPreviewCrop({
 			};
 
 			appliedCrop = clampRect(
-				transformCropRect(
-					rawRect,
-					getRotation(),
-					getFlipHorizontal(),
-					getFlipVertical(),
-					true
-				)
+				transformCropRect(rawRect, getRotation(), getFlipHorizontal(), getFlipVertical(), true)
 			);
 
 			cropAspect = initialCrop.aspectRatio ?? 'free';
@@ -264,36 +219,26 @@ export function createPreviewCrop({
 		}
 	}
 
-	function beginCropDrag(handle: DragHandle, event: MouseEvent) {
+	function beginCropDrag(handle: DragHandle, point: { x: number; y: number }) {
 		if (!draftCrop || !cropMode) return;
-		event.preventDefault();
-		event.stopPropagation();
 		cropHandle = handle;
 		cropDragOrigin = {
 			handle,
 			startRect: { ...draftCrop },
-			startX: event.clientX,
-			startY: event.clientY
+			startX: point.x,
+			startY: point.y
 		};
-		window.addEventListener('mousemove', handleCropDrag);
-		window.addEventListener('mouseup', endCropDrag);
 	}
 
-	function handleCropDrag(event: MouseEvent) {
-		if (!cropHandle || !cropDragOrigin || !draftCrop || !videoBounds.width || !videoBounds.height) {
+	function updateCropDrag(point: { x: number; y: number }) {
+		if (!cropHandle || !cropDragOrigin || !draftCrop) {
 			return;
 		}
 
-		const normalizedDx = (event.clientX - cropDragOrigin.startX) / videoBounds.width;
-		const normalizedDy = (event.clientY - cropDragOrigin.startY) / videoBounds.height;
+		const normalizedDx = point.x - cropDragOrigin.startX;
+		const normalizedDy = point.y - cropDragOrigin.startY;
 
-		const { dx, dy } = remapDragDeltas(
-			normalizedDx,
-			normalizedDy,
-			getRotation(),
-			false,
-			false
-		);
+		const { dx, dy } = remapDragDeltas(normalizedDx, normalizedDy, getRotation(), false, false);
 
 		const startRect = cropDragOrigin.startRect;
 
@@ -352,18 +297,12 @@ export function createPreviewCrop({
 	}
 
 	function endCropDrag() {
-		detachCropListeners();
 		cropHandle = null;
 		cropDragOrigin = null;
 	}
 
-	function detachCropListeners() {
-		window.removeEventListener('mousemove', handleCropDrag);
-		window.removeEventListener('mouseup', endCropDrag);
-	}
-
 	function destroy() {
-		detachCropListeners();
+		endCropDrag();
 	}
 
 	return {
@@ -379,17 +318,12 @@ export function createPreviewCrop({
 		get cropAspect() {
 			return cropAspect;
 		},
-		get videoStyle() {
-			return videoStyle;
-		},
 		get hasCropDimensions() {
 			return hasCropDimensions;
 		},
 		get isSideRotation() {
 			return isSideRotation;
 		},
-		setContainerSize,
-		setVideoBounds,
 		setNaturalDimensions,
 		syncInitialCrop,
 		toggleCropMode,
@@ -399,6 +333,8 @@ export function createPreviewCrop({
 		handleRotateToggle,
 		toggleFlip,
 		beginCropDrag,
+		updateCropDrag,
+		endCropDrag,
 		destroy
 	};
 }

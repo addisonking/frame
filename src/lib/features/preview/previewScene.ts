@@ -68,7 +68,7 @@ export function clampPreviewTransform(
 	const zoom = clampValue(transform.zoom, MIN_PREVIEW_ZOOM, MAX_PREVIEW_ZOOM);
 	const metrics = getSceneMetrics(state, zoom);
 
-	if (!metrics || state.presentation.cropMode) {
+	if (!metrics) {
 		return defaultPreviewTransform();
 	}
 

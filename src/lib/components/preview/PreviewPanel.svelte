@@ -3,7 +3,11 @@
 	import PreviewViewport from './PreviewViewport.svelte';
 	import PreviewTimeline from './PreviewTimeline.svelte';
 	import type { ConversionConfig, CropSettings, MetadataStatus } from '$lib/types';
-	import { createPreviewCrop, createPreviewPlayback, createPreviewRenderer } from '$lib/features/preview';
+	import {
+		createPreviewCrop,
+		createPreviewPlayback,
+		createPreviewRenderer
+	} from '$lib/features/preview';
 
 	type PreviewMediaKind = 'unknown' | 'video' | 'audio' | 'image';
 
@@ -97,6 +101,7 @@
 		const nextFlipVertical = flipVertical;
 		const cropMode = crop.cropMode;
 		const appliedCrop = crop.appliedCrop;
+		const draftCrop = crop.draftCrop;
 		const nextSourceWidth = sourceWidth;
 		const nextSourceHeight = sourceHeight;
 		untrack(() =>
@@ -107,6 +112,7 @@
 				flipVertical: nextFlipVertical,
 				cropMode,
 				appliedCrop,
+				draftCrop,
 				sourceWidth: nextSourceWidth,
 				sourceHeight: nextSourceHeight
 			})

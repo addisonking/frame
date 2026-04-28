@@ -2,7 +2,6 @@
 	import { untrack } from 'svelte';
 	import { convertFileSrc } from '@tauri-apps/api/core';
 	import { cn } from '$lib/utils/cn';
-	import CropOverlay from './CropOverlay.svelte';
 	import CropAspectBar from './CropAspectBar.svelte';
 	import PreviewToolbar from './PreviewToolbar.svelte';
 	import PreviewZoomToolbar from './PreviewZoomToolbar.svelte';
@@ -32,20 +31,21 @@
 		flipVertical: boolean;
 	} = $props();
 
-	let containerRef = $state<HTMLDivElement | undefined>();
 	let wrapperRef = $state<HTMLDivElement | undefined>();
-	let cropFrameRef = $state<HTMLDivElement | undefined>();
 	let canvasRef = $state<HTMLCanvasElement | undefined>();
 	let audioRef = $state<HTMLAudioElement | undefined>();
 	let isPanningPreview = $state(false);
+	let isDraggingCrop = $state(false);
+	let cropCursor = $state<string | null>(null);
 	let panPointerId: number | null = null;
+	let cropPointerId: number | null = null;
 	let lastPanX = 0;
 	let lastPanY = 0;
 	let suppressPreviewClick = false;
 
 	const isAudio = $derived(mediaKind === 'audio');
 	const audioSrc = $derived(convertFileSrc(filePath));
-	const canNavigatePreview = $derived(mediaKind !== 'unknown' && !isAudio && !crop.cropMode);
+	const canNavigatePreview = $derived(mediaKind !== 'unknown' && !isAudio);
 
 	$effect(() => {
 		const canvasElement = canvasRef;
@@ -66,39 +66,6 @@
 		}
 	});
 
-	$effect(() => {
-		if (!containerRef) return;
-
-		const observer = new ResizeObserver((entries) => {
-			for (const entry of entries) {
-				crop.setContainerSize(entry.contentRect.width, entry.contentRect.height);
-			}
-		});
-
-		observer.observe(containerRef);
-		return () => observer.disconnect();
-	});
-
-	$effect(() => {
-		if (!cropFrameRef) return;
-
-		const updateBounds = () => {
-			if (!cropFrameRef) return;
-			const rect = cropFrameRef.getBoundingClientRect();
-			crop.setVideoBounds(rect.width, rect.height);
-		};
-
-		const observer = new ResizeObserver(updateBounds);
-		observer.observe(cropFrameRef);
-		updateBounds();
-		window.addEventListener('resize', updateBounds);
-
-		return () => {
-			observer.disconnect();
-			window.removeEventListener('resize', updateBounds);
-		};
-	});
-
 	function handlePreviewClick(event: MouseEvent) {
 		if (suppressPreviewClick) {
 			suppressPreviewClick = false;
@@ -115,6 +82,20 @@
 	}
 
 	function beginPreviewPan(event: PointerEvent) {
+		if (crop.cropMode) {
+			const cropTarget = renderer.getCropPointerTarget(event.clientX, event.clientY);
+			if (cropTarget) {
+				event.preventDefault();
+				event.stopPropagation();
+				suppressPreviewClick = true;
+				isDraggingCrop = true;
+				cropPointerId = event.pointerId;
+				crop.beginCropDrag(cropTarget.handle, cropTarget.point);
+				(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+				return;
+			}
+		}
+
 		if (!canNavigatePreview || !renderer.hasPreviewTransform || event.button !== 0) return;
 
 		event.preventDefault();
@@ -128,6 +109,18 @@
 	}
 
 	function handlePreviewPan(event: PointerEvent) {
+		if (isDraggingCrop && cropPointerId === event.pointerId) {
+			const point = renderer.getCropPoint(event.clientX, event.clientY);
+			if (point) {
+				crop.updateCropDrag(point);
+			}
+			return;
+		}
+
+		if (crop.cropMode && !isPanningPreview) {
+			cropCursor = renderer.getCropPointerTarget(event.clientX, event.clientY)?.cursor ?? null;
+		}
+
 		if (!isPanningPreview || panPointerId !== event.pointerId) return;
 
 		const deltaX = event.clientX - lastPanX;
@@ -138,6 +131,15 @@
 	}
 
 	function endPreviewPan(event: PointerEvent) {
+		if (isDraggingCrop && cropPointerId === event.pointerId) {
+			isDraggingCrop = false;
+			cropPointerId = null;
+			crop.endCropDrag();
+			(event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
+			cropCursor = renderer.getCropPointerTarget(event.clientX, event.clientY)?.cursor ?? null;
+			return;
+		}
+
 		if (!isPanningPreview || panPointerId !== event.pointerId) return;
 
 		isPanningPreview = false;
@@ -148,13 +150,14 @@
 
 <div
 	class="input-highlight relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-md bg-black"
-	bind:this={containerRef}
 	onclick={handlePreviewClick}
 	onwheel={handlePreviewWheel}
 	role="presentation"
 >
 	{#if mediaKind === 'unknown'}
-		<div class="h-6 w-6 animate-spin rounded-full border border-frame-gray-600 border-t-transparent"></div>
+		<div
+			class="h-6 w-6 animate-spin rounded-full border border-frame-gray-600 border-t-transparent"
+		></div>
 	{:else if isAudio}
 		<audio bind:this={audioRef} src={audioSrc} class="hidden"></audio>
 	{:else}
@@ -164,6 +167,9 @@
 				canNavigatePreview && renderer.hasPreviewTransform && 'cursor-grab active:cursor-grabbing'
 			)}
 			bind:this={wrapperRef}
+			style:cursor={crop.cropMode
+				? (cropCursor ?? (renderer.hasPreviewTransform ? 'grab' : 'default'))
+				: null}
 			onpointerdown={beginPreviewPan}
 			onpointermove={handlePreviewPan}
 			onpointerup={endPreviewPan}
@@ -178,31 +184,21 @@
 			role="presentation"
 		>
 			<canvas bind:this={canvasRef} class="absolute inset-0 block h-full w-full bg-black"></canvas>
-
-			<div
-				class="absolute top-1/2 left-1/2 max-h-full max-w-full -translate-x-1/2 -translate-y-1/2 overflow-visible"
-				bind:this={cropFrameRef}
-				style={crop.videoStyle}
-			>
-				{#if crop.cropMode && crop.draftCrop}
-					<CropOverlay
-						draftCrop={crop.draftCrop}
-						isSideRotation={crop.isSideRotation}
-						onBeginCropDrag={crop.beginCropDrag}
-					/>
-				{/if}
-			</div>
 		</div>
 	{/if}
 
 	{#if renderer.isLoading}
-		<div class="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-black/20">
+		<div
+			class="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-black/20"
+		>
 			<div
 				class="h-6 w-6 animate-spin rounded-full border border-frame-gray-600 border-t-transparent"
 			></div>
 		</div>
 	{:else if renderer.error}
-		<div class="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-black/70 p-4">
+		<div
+			class="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-black/70 p-4"
+		>
 			<div class="max-w-sm text-center text-[10px] leading-5 text-frame-gray-600">
 				{renderer.error}
 			</div>
