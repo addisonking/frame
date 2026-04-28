@@ -10,6 +10,7 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"lint": "eslint .",
+		"test": "bun test",
 		"format": "prettier --write .",
 		"i18n:extract": "node scripts/i18n-extract.mjs",
 		"i18n:check": "node scripts/i18n-check.mjs",

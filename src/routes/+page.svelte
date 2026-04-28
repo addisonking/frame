@@ -154,6 +154,7 @@
 									<PreviewPanel
 										filePath={selectedFile.path}
 										mediaKind={selectedFile.metadata?.mediaKind}
+										metadataStatus={selectedFile.metadataStatus}
 										initialStartTime={selectedFile.config.startTime}
 										initialEndTime={selectedFile.config.endTime}
 										rotation={selectedFile.config.rotation}

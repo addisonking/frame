@@ -304,7 +304,7 @@ export function createPreviewCrop({
 			return;
 		}
 
-		let edges = {
+		const edges = {
 			left: startRect.x,
 			right: startRect.x + startRect.width,
 			top: startRect.y,

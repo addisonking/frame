@@ -1,46 +1,25 @@
-import { convertFileSrc } from '@tauri-apps/api/core';
-import { Application, Assets, Container, Graphics, Sprite, Texture } from 'pixi.js';
-import type { CropRect } from '$lib/utils/crop';
-
-type MediaKind = 'video' | 'audio' | 'image';
-const MAX_PREVIEW_DPR = 2;
-const DEFAULT_PREVIEW_ZOOM = 1;
-const MIN_PREVIEW_ZOOM = 0.25;
-const MAX_PREVIEW_ZOOM = 8;
-const PREVIEW_ZOOM_STEP = 1.18;
-const PREVIEW_PAN_OVERSCROLL = 2;
-const PREVIEW_TRANSFORM_LERP = 0.2;
-const PREVIEW_TRANSFORM_EPSILON = 0.01;
-
-interface PreviewPresentationState {
-	mediaKind: MediaKind;
-	rotation: '0' | '90' | '180' | '270';
-	flipHorizontal: boolean;
-	flipVertical: boolean;
-	cropMode: boolean;
-	appliedCrop: CropRect | null;
-	sourceWidth?: number;
-	sourceHeight?: number;
-}
-
-interface PreviewTransform {
-	zoom: number;
-	offsetX: number;
-	offsetY: number;
-}
-
-function getPreviewResolution(): number {
-	if (typeof window === 'undefined') return 1;
-	return Math.max(1, Math.min(window.devicePixelRatio || 1, MAX_PREVIEW_DPR));
-}
-
-function clampValue(value: number, min: number, max: number): number {
-	return Math.max(min, Math.min(max, value));
-}
-
-function defaultPreviewTransform(): PreviewTransform {
-	return { zoom: DEFAULT_PREVIEW_ZOOM, offsetX: 0, offsetY: 0 };
-}
+import { Application, Container, Graphics, Sprite, Texture } from 'pixi.js';
+import { getPreviewAssetUrl, loadPreviewTexture, unloadPreviewAsset } from './previewAssets';
+import { createPreviewPixiScene } from './previewPixiApp';
+import {
+	DEFAULT_PREVIEW_ZOOM,
+	MAX_PREVIEW_ZOOM,
+	MIN_PREVIEW_ZOOM,
+	PREVIEW_TRANSFORM_EPSILON,
+	PREVIEW_TRANSFORM_LERP,
+	PREVIEW_ZOOM_STEP,
+	clampPreviewTransform,
+	clampValue,
+	defaultPreviewTransform,
+	getPreviewResolution,
+	getSceneMetrics
+} from './previewScene';
+import type {
+	PreviewMediaKind,
+	PreviewPresentationState,
+	PreviewSource,
+	PreviewTransform
+} from './previewTypes';
 
 export function createPreviewRenderer() {
 	let canvasElement = $state<HTMLCanvasElement | undefined>();
@@ -55,8 +34,11 @@ export function createPreviewRenderer() {
 	let resizeObserver = $state<ResizeObserver | null>(null);
 	let texture = $state<Texture | null>(null);
 	let mediaElement = $state<HTMLVideoElement | undefined>();
+	let isLoading = $state(false);
+	let error = $state<string | null>(null);
 	let frameLoopCleanup: (() => void) | null = null;
 	let currentAssetUrl = $state<string | null>(null);
+	let pendingSource: PreviewSource | null = null;
 	let sourceRequestId = 0;
 	let naturalWidth = $state(0);
 	let naturalHeight = $state(0);
@@ -74,46 +56,50 @@ export function createPreviewRenderer() {
 		appliedCrop: null
 	});
 
-	async function ensureApp() {
-		if (!canvasElement || app) return;
+	function getSceneState() {
+		return {
+			presentation,
+			naturalWidth,
+			naturalHeight,
+			wrapperWidth,
+			wrapperHeight
+		};
+	}
+
+	function resizeAppToWrapper() {
+		if (!app || !wrapperWidth || !wrapperHeight) return;
+
+		app.renderer.resize(
+			Math.max(1, wrapperWidth),
+			Math.max(1, wrapperHeight),
+			getPreviewResolution()
+		);
+	}
+
+	async function ensureApp(): Promise<boolean> {
+		if (!canvasElement) return false;
+		if (!wrapperElement || !wrapperWidth || !wrapperHeight) return false;
+		if (app) return true;
 		if (appInitPromise) {
 			await appInitPromise;
-			return;
+			return Boolean(app);
 		}
 
 		appInitPromise = (async () => {
-			const nextApp = new Application();
-			await nextApp.init({
-				canvas: canvasElement,
-				width: Math.max(1, wrapperWidth || 1),
-				height: Math.max(1, wrapperHeight || 1),
-				resolution: getPreviewResolution(),
-				autoDensity: true,
-				backgroundAlpha: 0,
-				antialias: true,
-				autoStart: false,
-				preference: 'webgpu'
-			});
+			const scene = await createPreviewPixiScene(
+				canvasElement,
+				wrapperWidth,
+				wrapperHeight,
+				getPreviewResolution()
+			);
 
-			const nextContainer = new Container();
-			const nextRotationContainer = new Container();
-			const nextFlipContainer = new Container();
-			const nextSprite = new Sprite();
-			const nextCropMask = new Graphics();
-			nextSprite.anchor.set(0.5);
-			nextSprite.visible = false;
-			nextFlipContainer.addChild(nextSprite);
-			nextRotationContainer.addChild(nextFlipContainer);
-			nextContainer.addChild(nextRotationContainer);
-			nextApp.stage.addChild(nextContainer);
-			nextApp.stage.addChild(nextCropMask);
-
-			app = nextApp;
-			spriteContainer = nextContainer;
-			rotationContainer = nextRotationContainer;
-			flipContainer = nextFlipContainer;
-			sprite = nextSprite;
-			cropMask = nextCropMask;
+			app = scene.app;
+			spriteContainer = scene.spriteContainer;
+			rotationContainer = scene.rotationContainer;
+			flipContainer = scene.flipContainer;
+			sprite = scene.sprite;
+			cropMask = scene.cropMask;
+			resizeAppToWrapper();
 			updateScene();
 		})();
 
@@ -122,6 +108,8 @@ export function createPreviewRenderer() {
 		} finally {
 			appInitPromise = null;
 		}
+
+		return Boolean(app);
 	}
 
 	async function clearTexture() {
@@ -133,11 +121,7 @@ export function createPreviewRenderer() {
 		}
 
 		if (currentAssetUrl) {
-			try {
-				await Assets.unload(currentAssetUrl);
-			} catch {
-				// Ignore cache unload issues for local media assets.
-			}
+			await unloadPreviewAsset(currentAssetUrl);
 		}
 
 		texture?.destroy(false);
@@ -151,6 +135,10 @@ export function createPreviewRenderer() {
 			sprite.texture = Texture.EMPTY;
 			sprite.visible = false;
 		}
+	}
+
+	function getErrorMessage(cause: unknown) {
+		return cause instanceof Error ? cause.message : 'Failed to load preview media';
 	}
 
 	function stopPreviewTransformAnimation() {
@@ -202,7 +190,7 @@ export function createPreviewRenderer() {
 	}
 
 	function applyPreviewTransform(nextTransform: PreviewTransform, immediate = false) {
-		previewTransform = clampPreviewTransform(nextTransform);
+		previewTransform = clampPreviewTransform(getSceneState(), nextTransform);
 
 		if (immediate) {
 			stopPreviewTransformAnimation();
@@ -343,44 +331,73 @@ export function createPreviewRenderer() {
 		};
 	}
 
-	async function setSource(filePath: string, mediaKind: MediaKind) {
+	async function setSource(filePath: string, mediaKind: PreviewMediaKind) {
 		const requestId = ++sourceRequestId;
+		pendingSource = { filePath, mediaKind };
 		presentation = { ...presentation, mediaKind };
+		error = null;
 
-		if (mediaKind === 'audio') {
+		if (mediaKind === 'unknown' || mediaKind === 'audio') {
+			pendingSource = null;
+			isLoading = false;
 			await clearTexture();
 			resetPreviewTransform(true);
 			return;
 		}
 
-		await ensureApp();
-		if (requestId !== sourceRequestId) return;
-
-		const assetUrl = convertFileSrc(filePath);
-		if (currentAssetUrl === assetUrl && texture) return;
-
-		await clearTexture();
-		resetPreviewTransform(true);
-		if (requestId !== sourceRequestId) return;
-
-		const loaded = await Assets.load({
-			src: assetUrl,
-			data: {
-				autoPlay: false,
-				muted: false,
-				loop: false,
-				playsinline: true,
-				preload: true
-			}
-		});
-		if (requestId !== sourceRequestId) return;
-
-		if (!(loaded instanceof Texture)) {
-			throw new Error('Pixi Assets.load did not return a Texture for preview media');
+		if (!canvasElement || !wrapperElement || !wrapperWidth || !wrapperHeight) {
+			isLoading = true;
+			return;
 		}
 
-		currentAssetUrl = assetUrl;
-		bindTexture(loaded);
+		const hasApp = await ensureApp();
+		if (!hasApp) return;
+		if (requestId !== sourceRequestId) return;
+
+		const assetUrl = getPreviewAssetUrl(filePath);
+		if (currentAssetUrl === assetUrl && texture) {
+			pendingSource = null;
+			isLoading = false;
+			return;
+		}
+
+		isLoading = true;
+		try {
+			await clearTexture();
+			resetPreviewTransform(true);
+			if (requestId !== sourceRequestId) return;
+
+			const { texture: loaded } = await loadPreviewTexture(filePath);
+
+			if (requestId !== sourceRequestId) {
+				const latestAssetUrl = pendingSource ? getPreviewAssetUrl(pendingSource.filePath) : null;
+				if (latestAssetUrl !== assetUrl && currentAssetUrl !== assetUrl) {
+					loaded.destroy(false);
+					await unloadPreviewAsset(assetUrl);
+				}
+				return;
+			}
+
+			currentAssetUrl = assetUrl;
+			pendingSource = null;
+			isLoading = false;
+			bindTexture(loaded);
+		} catch (cause) {
+			if (requestId !== sourceRequestId) return;
+			isLoading = false;
+			error = getErrorMessage(cause);
+			pendingSource = null;
+			await clearTexture();
+			resetPreviewTransform(true);
+		}
+	}
+
+	function retryPendingSource() {
+		if (!pendingSource || pendingSource.mediaKind === 'audio') return;
+		if (!canvasElement || !wrapperElement) return;
+
+		const { filePath, mediaKind } = pendingSource;
+		void setSource(filePath, mediaKind);
 	}
 
 	function setPresentationState(nextPresentation: PreviewPresentationState) {
@@ -406,7 +423,7 @@ export function createPreviewRenderer() {
 
 	function setCanvasElement(element?: HTMLCanvasElement) {
 		canvasElement = element;
-		void ensureApp();
+		void ensureApp().then(retryPendingSource);
 	}
 
 	function setWrapperElement(element?: HTMLDivElement) {
@@ -422,68 +439,16 @@ export function createPreviewRenderer() {
 			wrapperWidth = rect.width;
 			wrapperHeight = rect.height;
 			if (app) {
-				app.renderer.resize(
-					Math.max(1, rect.width),
-					Math.max(1, rect.height),
-					getPreviewResolution()
-				);
+				resizeAppToWrapper();
 			}
 			updateScene();
+			void ensureApp().then(retryPendingSource);
 		};
 
 		resizeObserver = new ResizeObserver(updateWrapperSize);
 		resizeObserver.observe(wrapperElement);
 		updateWrapperSize();
-		void ensureApp();
-	}
-
-	function getSceneMetrics(zoom = previewTransform.zoom) {
-		const baseWidth = presentation.sourceWidth ?? naturalWidth;
-		const baseHeight = presentation.sourceHeight ?? naturalHeight;
-		if (!baseWidth || !baseHeight || !wrapperWidth || !wrapperHeight) return null;
-
-		const cropRect =
-			!presentation.cropMode && presentation.appliedCrop
-				? presentation.appliedCrop
-				: { x: 0, y: 0, width: 1, height: 1 };
-
-		const contentWidth = baseWidth * cropRect.width;
-		const contentHeight = baseHeight * cropRect.height;
-		const sideRotation = presentation.rotation === '90' || presentation.rotation === '270';
-		const visualWidth = sideRotation ? contentHeight : contentWidth;
-		const visualHeight = sideRotation ? contentWidth : contentHeight;
-		const fitScale = Math.min(wrapperWidth / visualWidth, wrapperHeight / visualHeight);
-		const cropCenterX = cropRect.x + cropRect.width / 2 - 0.5;
-		const cropCenterY = cropRect.y + cropRect.height / 2 - 0.5;
-
-		return {
-			baseWidth,
-			baseHeight,
-			cropCenterX,
-			cropCenterY,
-			fitScale,
-			displayedWidth: visualWidth * fitScale * zoom,
-			displayedHeight: visualHeight * fitScale * zoom
-		};
-	}
-
-	function clampPreviewTransform(transform: PreviewTransform): PreviewTransform {
-		const zoom = clampValue(transform.zoom, MIN_PREVIEW_ZOOM, MAX_PREVIEW_ZOOM);
-		const metrics = getSceneMetrics(zoom);
-
-		if (!metrics || presentation.cropMode) {
-			return { zoom: DEFAULT_PREVIEW_ZOOM, offsetX: 0, offsetY: 0 };
-		}
-
-		const maxOffsetX = Math.max(wrapperWidth * PREVIEW_PAN_OVERSCROLL, metrics.displayedWidth) / 2;
-		const maxOffsetY =
-			Math.max(wrapperHeight * PREVIEW_PAN_OVERSCROLL, metrics.displayedHeight) / 2;
-
-		return {
-			zoom,
-			offsetX: clampValue(transform.offsetX, -maxOffsetX, maxOffsetX),
-			offsetY: clampValue(transform.offsetY, -maxOffsetY, maxOffsetY)
-		};
+		void ensureApp().then(retryPendingSource);
 	}
 
 	function setPreviewTransform(nextTransform: PreviewTransform) {
@@ -565,7 +530,7 @@ export function createPreviewRenderer() {
 
 		const effectiveTransform = presentation.cropMode
 			? defaultPreviewTransform()
-			: clampPreviewTransform(previewTransform);
+			: clampPreviewTransform(getSceneState(), previewTransform);
 		if (
 			!presentation.cropMode &&
 			(effectiveTransform.zoom !== previewTransform.zoom ||
@@ -578,13 +543,13 @@ export function createPreviewRenderer() {
 		if (presentation.cropMode) {
 			renderedPreviewTransform = defaultPreviewTransform();
 		} else {
-			renderedPreviewTransform = clampPreviewTransform(renderedPreviewTransform);
+			renderedPreviewTransform = clampPreviewTransform(getSceneState(), renderedPreviewTransform);
 		}
 
 		const renderTransform = presentation.cropMode
 			? defaultPreviewTransform()
 			: renderedPreviewTransform;
-		const metrics = getSceneMetrics(renderTransform.zoom);
+		const metrics = getSceneMetrics(getSceneState(), renderTransform.zoom);
 		if (!metrics) return;
 
 		sprite.texture = texture;
@@ -661,6 +626,12 @@ export function createPreviewRenderer() {
 				previewTransform.offsetX !== 0 ||
 				previewTransform.offsetY !== 0
 			);
+		},
+		get isLoading() {
+			return isLoading;
+		},
+		get error() {
+			return error;
 		},
 		setCanvasElement,
 		setWrapperElement,

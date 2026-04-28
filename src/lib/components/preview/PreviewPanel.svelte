@@ -2,12 +2,15 @@
 	import { onMount, untrack } from 'svelte';
 	import PreviewViewport from './PreviewViewport.svelte';
 	import PreviewTimeline from './PreviewTimeline.svelte';
-	import type { ConversionConfig, CropSettings } from '$lib/types';
+	import type { ConversionConfig, CropSettings, MetadataStatus } from '$lib/types';
 	import { createPreviewCrop, createPreviewPlayback, createPreviewRenderer } from '$lib/features/preview';
+
+	type PreviewMediaKind = 'unknown' | 'video' | 'audio' | 'image';
 
 	let {
 		filePath,
-		mediaKind = 'video',
+		mediaKind,
+		metadataStatus = 'idle',
 		initialStartTime,
 		initialEndTime,
 		rotation = '0',
@@ -22,6 +25,7 @@
 	}: {
 		filePath: string;
 		mediaKind?: 'video' | 'audio' | 'image';
+		metadataStatus?: MetadataStatus;
 		initialStartTime?: string;
 		initialEndTime?: string;
 		rotation?: ConversionConfig['rotation'];
@@ -35,11 +39,14 @@
 		sourceHeight?: number;
 	} = $props();
 
-	const isImage = $derived(mediaKind === 'image');
-	const trimDisabled = $derived(controlsDisabled || isImage);
+	const previewMediaKind = $derived<PreviewMediaKind>(
+		metadataStatus === 'ready' && mediaKind ? mediaKind : 'unknown'
+	);
+	const isImage = $derived(previewMediaKind === 'image');
+	const trimDisabled = $derived(controlsDisabled || isImage || previewMediaKind === 'unknown');
 
 	const playback = createPreviewPlayback({
-		isImage: () => mediaKind === 'image',
+		isImage: () => previewMediaKind === 'image',
 		onSave: (start, end) => onSave(start, end)
 	});
 
@@ -56,7 +63,9 @@
 	const renderer = createPreviewRenderer();
 
 	$effect(() => {
-		untrack(() => playback.syncInitialValues(initialStartTime, initialEndTime));
+		const nextStartTime = initialStartTime;
+		const nextEndTime = initialEndTime;
+		untrack(() => playback.syncInitialValues(nextStartTime, nextEndTime));
 	});
 
 	$effect(() => {
@@ -68,19 +77,21 @@
 	});
 
 	$effect(() => {
-		untrack(() => crop.setNaturalDimensions(renderer.naturalWidth, renderer.naturalHeight));
+		const naturalWidth = renderer.naturalWidth;
+		const naturalHeight = renderer.naturalHeight;
+		untrack(() => crop.setNaturalDimensions(naturalWidth, naturalHeight));
 	});
 
 	$effect(() => {
 		void filePath;
-		void mediaKind;
+		void previewMediaKind;
 		untrack(() => {
-			void renderer.setSource(filePath, mediaKind);
+			void renderer.setSource(filePath, previewMediaKind);
 		});
 	});
 
 	$effect(() => {
-		const nextMediaKind = mediaKind;
+		const nextMediaKind = previewMediaKind;
 		const nextRotation = rotation;
 		const nextFlipHorizontal = flipHorizontal;
 		const nextFlipVertical = flipVertical;
@@ -114,7 +125,7 @@
 <div class="card-highlight flex h-full flex-col rounded-lg bg-frame-gray-100 p-4 shadow-md">
 	<PreviewViewport
 		{filePath}
-		{mediaKind}
+		mediaKind={previewMediaKind}
 		{renderer}
 		{crop}
 		{playback}

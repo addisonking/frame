@@ -1,6 +1,8 @@
 <script lang="ts">
+	import Button from '$lib/components/ui/Button.svelte';
 	import Label from '$lib/components/ui/Label.svelte';
 	import TimecodeInput from '$lib/components/ui/TimecodeInput.svelte';
+	import { IconPause2, IconPlay } from '$lib/icons';
 	import { _ } from '$lib/i18n';
 	import { cn } from '$lib/utils/cn';
 	import type { PreviewPlaybackController } from '$lib/features/preview';
@@ -153,6 +155,21 @@
 					></div>
 				{/if}
 			</div>
+		</div>
+		<div class="space-y-1.5">
+			<Label>&nbsp;</Label>
+			<Button
+				size="icon"
+				variant="ghost"
+				onclick={() => playback.togglePlay()}
+				disabled={trimDisabled}
+			>
+				{#if playback.isPlaying}
+					<IconPause2 size={16} />
+				{:else}
+					<IconPlay size={16} />
+				{/if}
+			</Button>
 		</div>
 	</div>
 </div>

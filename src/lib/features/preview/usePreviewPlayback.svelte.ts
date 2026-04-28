@@ -213,7 +213,7 @@ export function createPreviewPlayback({ isImage, onSave }: PreviewPlaybackOption
 		}
 
 		dragging = 'scrub';
-		wasPlayingBeforeScrub = false;
+		wasPlayingBeforeScrub = isPlaying;
 		if (isPlaying && mediaElement) {
 			mediaElement.pause();
 		}

@@ -1,8 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { fade } from 'svelte/transition';
 	import { convertFileSrc } from '@tauri-apps/api/core';
-	import { IconPlay, IconPause2 } from '$lib/icons';
 	import { cn } from '$lib/utils/cn';
 	import CropOverlay from './CropOverlay.svelte';
 	import CropAspectBar from './CropAspectBar.svelte';
@@ -25,7 +23,7 @@
 		flipVertical
 	}: {
 		filePath: string;
-		mediaKind: 'video' | 'audio' | 'image';
+		mediaKind: 'unknown' | 'video' | 'audio' | 'image';
 		renderer: PreviewRendererController;
 		crop: PreviewCropController;
 		playback: PreviewPlaybackController;
@@ -39,22 +37,22 @@
 	let cropFrameRef = $state<HTMLDivElement | undefined>();
 	let canvasRef = $state<HTMLCanvasElement | undefined>();
 	let audioRef = $state<HTMLAudioElement | undefined>();
-	let isHovering = $state(false);
 	let isPanningPreview = $state(false);
 	let panPointerId: number | null = null;
 	let lastPanX = 0;
 	let lastPanY = 0;
 	let suppressPreviewClick = false;
 
-	const isImage = $derived(mediaKind === 'image');
 	const isAudio = $derived(mediaKind === 'audio');
 	const audioSrc = $derived(convertFileSrc(filePath));
-	const canNavigatePreview = $derived(!isAudio && !crop.cropMode);
+	const canNavigatePreview = $derived(mediaKind !== 'unknown' && !isAudio && !crop.cropMode);
 
 	$effect(() => {
+		const canvasElement = canvasRef;
+		const wrapperElement = wrapperRef;
 		untrack(() => {
-			renderer.setCanvasElement(canvasRef);
-			renderer.setWrapperElement(wrapperRef);
+			renderer.setCanvasElement(canvasElement);
+			renderer.setWrapperElement(wrapperElement);
 		});
 	});
 
@@ -63,7 +61,8 @@
 			const mediaElement = renderer.mediaElement;
 			untrack(() => playback.setMediaElement(mediaElement));
 		} else {
-			untrack(() => playback.setMediaElement(audioRef));
+			const audioElement = audioRef;
+			untrack(() => playback.setMediaElement(audioElement));
 		}
 	});
 
@@ -104,11 +103,6 @@
 		if (suppressPreviewClick) {
 			suppressPreviewClick = false;
 			event.stopPropagation();
-			return;
-		}
-
-		if (!isImage && !crop.cropMode) {
-			playback.togglePlay();
 		}
 	}
 
@@ -157,11 +151,11 @@
 	bind:this={containerRef}
 	onclick={handlePreviewClick}
 	onwheel={handlePreviewWheel}
-	onmouseenter={() => (isHovering = true)}
-	onmouseleave={() => (isHovering = false)}
 	role="presentation"
 >
-	{#if isAudio}
+	{#if mediaKind === 'unknown'}
+		<div class="h-6 w-6 animate-spin rounded-full border border-frame-gray-600 border-t-transparent"></div>
+	{:else if isAudio}
 		<audio bind:this={audioRef} src={audioSrc} class="hidden"></audio>
 	{:else}
 		<div
@@ -201,6 +195,20 @@
 		</div>
 	{/if}
 
+	{#if renderer.isLoading}
+		<div class="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-black/20">
+			<div
+				class="h-6 w-6 animate-spin rounded-full border border-frame-gray-600 border-t-transparent"
+			></div>
+		</div>
+	{:else if renderer.error}
+		<div class="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-black/70 p-4">
+			<div class="max-w-sm text-center text-[10px] leading-5 text-frame-gray-600">
+				{renderer.error}
+			</div>
+		</div>
+	{/if}
+
 	{#if crop.cropMode && crop.draftCrop}
 		<CropAspectBar
 			cropAspect={crop.cropAspect}
@@ -228,28 +236,4 @@
 		onZoomIn={() => renderer.zoomPreviewBy(1)}
 		onZoomOut={() => renderer.zoomPreviewBy(-1)}
 	/>
-
-	{#if !isImage && !crop.cropMode && (!playback.isPlaying || isHovering)}
-		<div
-			class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
-			onclick={(event) => {
-				event.stopPropagation();
-				playback.togglePlay();
-			}}
-			role="presentation"
-		>
-			<div class="absolute inset-0 bg-background/40" transition:fade={{ duration: 100 }}></div>
-			<div
-				class="pointer-events-auto relative flex size-16 items-center justify-center rounded-full bg-frame-gray-200 text-foreground shadow-sm backdrop-blur-md"
-				style="transform-origin: center; will-change: opacity; transform: translateZ(0);"
-				transition:fade={{ duration: 100 }}
-			>
-				{#if playback.isPlaying}
-					<IconPause2 size={24} />
-				{:else}
-					<IconPlay size={24} />
-				{/if}
-			</div>
-		</div>
-	{/if}
 </div>
