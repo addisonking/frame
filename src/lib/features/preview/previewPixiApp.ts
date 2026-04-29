@@ -26,7 +26,7 @@ export async function createPreviewPixiScene(
 		resolution,
 		autoDensity: true,
 		backgroundAlpha: 0,
-		antialias: true,
+		antialias: false,
 		autoStart: false,
 		preference: 'webgpu'
 	});

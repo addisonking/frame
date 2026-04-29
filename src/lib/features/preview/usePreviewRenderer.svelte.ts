@@ -53,38 +53,39 @@ type PreviewVideoTextureSource = {
 };
 
 export function createPreviewRenderer() {
-	let canvasElement = $state<HTMLCanvasElement | undefined>();
-	let wrapperElement = $state<HTMLDivElement | undefined>();
-	let app = $state<Application | null>(null);
+	let canvasElement: HTMLCanvasElement | undefined;
+	let wrapperElement: HTMLDivElement | undefined;
+	let app: Application | null = null;
 	let appInitPromise: Promise<void> | null = null;
-	let spriteContainer = $state<Container | null>(null);
-	let rotationContainer = $state<Container | null>(null);
-	let flipContainer = $state<Container | null>(null);
-	let sprite = $state<Sprite | null>(null);
-	let cropMask = $state<Graphics | null>(null);
-	let cropOverlay = $state<Graphics | null>(null);
-	let overlaySprite = $state<Sprite | null>(null);
-	let overlayControls = $state<Graphics | null>(null);
-	let resizeObserver = $state<ResizeObserver | null>(null);
-	let texture = $state<Texture | null>(null);
-	let overlayTexture = $state<Texture | null>(null);
+	let spriteContainer: Container | null = null;
+	let rotationContainer: Container | null = null;
+	let flipContainer: Container | null = null;
+	let sprite: Sprite | null = null;
+	let cropMask: Graphics | null = null;
+	let cropOverlay: Graphics | null = null;
+	let overlaySprite: Sprite | null = null;
+	let overlayControls: Graphics | null = null;
+	let resizeObserver: ResizeObserver | null = null;
+	let texture: Texture | null = null;
+	let overlayTexture: Texture | null = null;
 	let mediaElement = $state<HTMLVideoElement | undefined>();
 	let isLoading = $state(false);
 	let error = $state<string | null>(null);
 	let frameLoopCleanup: (() => void) | null = null;
-	let currentAssetUrl = $state<string | null>(null);
-	let currentOverlayAssetUrl = $state<string | null>(null);
+	let currentAssetUrl: string | null = null;
+	let currentOverlayAssetUrl: string | null = null;
 	let pendingSource: PreviewSource | null = null;
 	let sourceRequestId = 0;
 	let overlayRequestId = 0;
 	let naturalWidth = $state(0);
 	let naturalHeight = $state(0);
-	let wrapperWidth = $state(0);
-	let wrapperHeight = $state(0);
+	let wrapperWidth = 0;
+	let wrapperHeight = 0;
 	let previewTransform = $state<PreviewTransform>(defaultPreviewTransform());
 	let renderedPreviewTransform: PreviewTransform = defaultPreviewTransform();
 	let previewTransformFrame = 0;
-	let presentation = $state<PreviewPresentationState>({
+	let renderFrame = 0;
+	let presentation: PreviewPresentationState = {
 		mediaKind: 'video',
 		rotation: '0',
 		flipHorizontal: false,
@@ -94,7 +95,7 @@ export function createPreviewRenderer() {
 		draftCrop: null,
 		overlayMode: false,
 		overlay: null
-	});
+	};
 
 	function getSceneState() {
 		return {
@@ -114,6 +115,26 @@ export function createPreviewRenderer() {
 			Math.max(1, wrapperHeight),
 			getPreviewResolution()
 		);
+	}
+
+	function cancelScheduledRender() {
+		if (!renderFrame) return;
+		window.cancelAnimationFrame(renderFrame);
+		renderFrame = 0;
+	}
+
+	function requestRender() {
+		if (!app || renderFrame) return;
+		renderFrame = window.requestAnimationFrame(() => {
+			renderFrame = 0;
+			app?.render();
+		});
+	}
+
+	function renderCurrentScene() {
+		if (!app) return;
+		cancelScheduledRender();
+		app.render();
 	}
 
 	async function ensureApp(): Promise<boolean> {
@@ -163,11 +184,8 @@ export function createPreviewRenderer() {
 			mediaElement.pause();
 		}
 
-		if (currentAssetUrl) {
-			await unloadPreviewAsset(currentAssetUrl);
-		}
-
-		texture?.destroy(false);
+		const assetUrl = currentAssetUrl;
+		const previousTexture = texture;
 		texture = null;
 		mediaElement = undefined;
 		currentAssetUrl = null;
@@ -185,14 +203,18 @@ export function createPreviewRenderer() {
 			overlaySprite.visible = false;
 		}
 		overlayControls?.clear();
+		renderCurrentScene();
+
+		if (assetUrl) {
+			await unloadPreviewAsset(assetUrl);
+		}
+
+		previousTexture?.destroy(false);
 	}
 
 	async function clearOverlayTexture() {
-		if (currentOverlayAssetUrl) {
-			await unloadPreviewAsset(currentOverlayAssetUrl);
-		}
-
-		overlayTexture?.destroy(false);
+		const assetUrl = currentOverlayAssetUrl;
+		const previousTexture = overlayTexture;
 		overlayTexture = null;
 		currentOverlayAssetUrl = null;
 
@@ -202,10 +224,67 @@ export function createPreviewRenderer() {
 		}
 
 		overlayControls?.clear();
+		renderCurrentScene();
+
+		if (assetUrl) {
+			await unloadPreviewAsset(assetUrl);
+		}
+
+		previousTexture?.destroy(false);
 	}
 
 	function getErrorMessage(cause: unknown) {
 		return cause instanceof Error ? cause.message : 'Failed to load preview media';
+	}
+
+	function areCropRectsEqual(
+		left: PreviewPresentationState['appliedCrop'],
+		right: PreviewPresentationState['appliedCrop']
+	) {
+		if (left === right) return true;
+		if (!left || !right) return false;
+		return (
+			left.x === right.x &&
+			left.y === right.y &&
+			left.width === right.width &&
+			left.height === right.height
+		);
+	}
+
+	function areOverlaysEqual(
+		left: PreviewPresentationState['overlay'],
+		right: PreviewPresentationState['overlay']
+	) {
+		if (left === right) return true;
+		if (!left || !right) return false;
+		return (
+			left.enabled === right.enabled &&
+			left.path === right.path &&
+			left.x === right.x &&
+			left.y === right.y &&
+			left.width === right.width &&
+			left.opacity === right.opacity &&
+			left.anchor === right.anchor
+		);
+	}
+
+	function arePresentationStatesEqual(
+		left: PreviewPresentationState,
+		right: PreviewPresentationState
+	) {
+		return (
+			left.mediaKind === right.mediaKind &&
+			left.rotation === right.rotation &&
+			left.flipHorizontal === right.flipHorizontal &&
+			left.flipVertical === right.flipVertical &&
+			left.cropMode === right.cropMode &&
+			left.overlayMode === right.overlayMode &&
+			left.sourceWidth === right.sourceWidth &&
+			left.sourceHeight === right.sourceHeight &&
+			areCropRectsEqual(left.appliedCrop, right.appliedCrop) &&
+			areCropRectsEqual(left.draftCrop, right.draftCrop) &&
+			areOverlaysEqual(left.overlay, right.overlay)
+		);
 	}
 
 	function stopPreviewTransformAnimation() {
@@ -419,7 +498,7 @@ export function createPreviewRenderer() {
 			}
 		}
 
-		app.render();
+		renderCurrentScene();
 	}
 
 	function attachFrameLoop(video: HTMLVideoElement) {
@@ -478,13 +557,17 @@ export function createPreviewRenderer() {
 					});
 				}
 			};
+			const renderSettledMediaFrame = () => {
+				if (!video.paused && !video.ended) return;
+				renderCurrentFrame();
+			};
 
 			video.addEventListener('play', start);
 			video.addEventListener('pause', stop);
 			video.addEventListener('ended', stop);
 			video.addEventListener('seeking', renderCurrentFrame);
 			video.addEventListener('seeked', renderCurrentFrame);
-			video.addEventListener('timeupdate', renderCurrentFrame);
+			video.addEventListener('timeupdate', renderSettledMediaFrame);
 			video.addEventListener('loadedmetadata', renderCurrentFrame);
 			video.addEventListener('loadeddata', renderCurrentFrame);
 			video.addEventListener('canplay', renderCurrentFrame);
@@ -502,7 +585,7 @@ export function createPreviewRenderer() {
 				video.removeEventListener('ended', stop);
 				video.removeEventListener('seeking', renderCurrentFrame);
 				video.removeEventListener('seeked', renderCurrentFrame);
-				video.removeEventListener('timeupdate', renderCurrentFrame);
+				video.removeEventListener('timeupdate', renderSettledMediaFrame);
 				video.removeEventListener('loadedmetadata', renderCurrentFrame);
 				video.removeEventListener('loadeddata', renderCurrentFrame);
 				video.removeEventListener('canplay', renderCurrentFrame);
@@ -545,13 +628,17 @@ export function createPreviewRenderer() {
 				refreshVideoFrame(video);
 			});
 		};
+		const renderSettledMediaFrame = () => {
+			if (!video.paused && !video.ended) return;
+			renderCurrentFrame();
+		};
 
 		video.addEventListener('play', start);
 		video.addEventListener('pause', stop);
 		video.addEventListener('ended', stop);
 		video.addEventListener('seeking', renderCurrentFrame);
 		video.addEventListener('seeked', renderCurrentFrame);
-		video.addEventListener('timeupdate', renderCurrentFrame);
+		video.addEventListener('timeupdate', renderSettledMediaFrame);
 		video.addEventListener('loadedmetadata', renderCurrentFrame);
 		video.addEventListener('loadeddata', renderCurrentFrame);
 		video.addEventListener('canplay', renderCurrentFrame);
@@ -569,7 +656,7 @@ export function createPreviewRenderer() {
 			video.removeEventListener('ended', stop);
 			video.removeEventListener('seeking', renderCurrentFrame);
 			video.removeEventListener('seeked', renderCurrentFrame);
-			video.removeEventListener('timeupdate', renderCurrentFrame);
+			video.removeEventListener('timeupdate', renderSettledMediaFrame);
 			video.removeEventListener('loadedmetadata', renderCurrentFrame);
 			video.removeEventListener('loadeddata', renderCurrentFrame);
 			video.removeEventListener('canplay', renderCurrentFrame);
@@ -647,7 +734,24 @@ export function createPreviewRenderer() {
 		void setSource(filePath, mediaKind);
 	}
 
+	function syncOverlayAfterAppReady() {
+		if (!presentation.overlay?.enabled || !presentation.overlay.path) return;
+		void syncOverlayTexture();
+	}
+
 	function setPresentationState(nextPresentation: PreviewPresentationState) {
+		if (arePresentationStatesEqual(presentation, nextPresentation)) {
+			if (
+				nextPresentation.overlay?.enabled &&
+				nextPresentation.overlay.path &&
+				app &&
+				!overlayTexture
+			) {
+				void syncOverlayTexture();
+			}
+			return;
+		}
+
 		const shouldResetView =
 			presentation.mediaKind !== nextPresentation.mediaKind ||
 			presentation.sourceWidth !== nextPresentation.sourceWidth ||
@@ -675,7 +779,10 @@ export function createPreviewRenderer() {
 
 	function setCanvasElement(element?: HTMLCanvasElement) {
 		canvasElement = element;
-		void ensureApp().then(retryPendingSource);
+		void ensureApp().then(() => {
+			retryPendingSource();
+			syncOverlayAfterAppReady();
+		});
 	}
 
 	function setWrapperElement(element?: HTMLDivElement) {
@@ -694,13 +801,19 @@ export function createPreviewRenderer() {
 				resizeAppToWrapper();
 			}
 			updateScene();
-			void ensureApp().then(retryPendingSource);
+			void ensureApp().then(() => {
+				retryPendingSource();
+				syncOverlayAfterAppReady();
+			});
 		};
 
 		resizeObserver = new ResizeObserver(updateWrapperSize);
 		resizeObserver.observe(wrapperElement);
 		updateWrapperSize();
-		void ensureApp().then(retryPendingSource);
+		void ensureApp().then(() => {
+			retryPendingSource();
+			syncOverlayAfterAppReady();
+		});
 	}
 
 	function setPreviewTransform(nextTransform: PreviewTransform) {
@@ -1177,13 +1290,14 @@ export function createPreviewRenderer() {
 		} else {
 			overlaySprite.visible = false;
 		}
-		app.render();
+		requestRender();
 	}
 
 	function destroy() {
 		sourceRequestId += 1;
 		overlayRequestId += 1;
 		stopPreviewTransformAnimation();
+		cancelScheduledRender();
 		resizeObserver?.disconnect();
 		void clearTexture();
 		void clearOverlayTexture();

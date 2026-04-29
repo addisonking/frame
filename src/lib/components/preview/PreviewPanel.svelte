@@ -2,7 +2,12 @@
 	import { onMount, untrack } from 'svelte';
 	import PreviewViewport from './PreviewViewport.svelte';
 	import PreviewTimeline from './PreviewTimeline.svelte';
-	import type { ConversionConfig, CropSettings, MetadataStatus } from '$lib/types';
+	import {
+		AUDIO_ONLY_CONTAINERS,
+		type ConversionConfig,
+		type CropSettings,
+		type MetadataStatus
+	} from '$lib/types';
 	import {
 		createPreviewCrop,
 		createPreviewOverlay,
@@ -54,9 +59,14 @@
 		metadataStatus === 'ready' && mediaKind ? mediaKind : 'unknown'
 	);
 	const isImage = $derived(previewMediaKind === 'image');
+	const isAudioOnlyOutput = $derived(AUDIO_ONLY_CONTAINERS.includes(container ?? ''));
+	const hideVisualControls = $derived(
+		previewMediaKind === 'audio' || (previewMediaKind === 'video' && isAudioOnlyOutput)
+	);
 	const trimDisabled = $derived(controlsDisabled || isImage || previewMediaKind === 'unknown');
 	const overlayAvailable = $derived(
 		previewMediaKind === 'video' &&
+			!isAudioOnlyOutput &&
 			processingMode !== 'copy' &&
 			(container ?? '').toLowerCase() !== 'gif'
 	);
@@ -172,6 +182,7 @@
 		{flipHorizontal}
 		{flipVertical}
 		{overlayAvailable}
+		{hideVisualControls}
 	/>
 	<PreviewTimeline {playback} {trimDisabled} {isImage} />
 </div>

@@ -25,7 +25,8 @@
 		controlsDisabled,
 		flipHorizontal,
 		flipVertical,
-		overlayAvailable
+		overlayAvailable,
+		hideVisualControls
 	}: {
 		filePath: string;
 		mediaKind: 'unknown' | 'video' | 'audio' | 'image';
@@ -37,6 +38,7 @@
 		flipHorizontal: boolean;
 		flipVertical: boolean;
 		overlayAvailable: boolean;
+		hideVisualControls: boolean;
 	} = $props();
 
 	let wrapperRef = $state<HTMLDivElement | undefined>();
@@ -55,7 +57,8 @@
 
 	const isAudio = $derived(mediaKind === 'audio');
 	const audioSrc = $derived(convertFileSrc(filePath));
-	const canNavigatePreview = $derived(mediaKind !== 'unknown' && !isAudio);
+	const canUseVisualControls = $derived(!hideVisualControls);
+	const canNavigatePreview = $derived(mediaKind !== 'unknown' && !isAudio && canUseVisualControls);
 
 	$effect(() => {
 		const canvasElement = canvasRef;
@@ -92,7 +95,7 @@
 	}
 
 	function beginPreviewPan(event: PointerEvent) {
-		if (overlayAvailable && overlay.overlayMode) {
+		if (canUseVisualControls && overlayAvailable && overlay.overlayMode) {
 			const overlayTarget = renderer.getOverlayPointerTarget(event.clientX, event.clientY);
 			if (overlayTarget) {
 				event.preventDefault();
@@ -105,7 +108,7 @@
 			}
 		}
 
-		if (crop.cropMode) {
+		if (canUseVisualControls && crop.cropMode) {
 			const cropTarget = renderer.getCropPointerTarget(event.clientX, event.clientY);
 			if (cropTarget) {
 				event.preventDefault();
@@ -132,7 +135,12 @@
 	}
 
 	function handlePreviewPan(event: PointerEvent) {
-		if (overlayAvailable && overlay.isDragging && overlayPointerId === event.pointerId) {
+		if (
+			canUseVisualControls &&
+			overlayAvailable &&
+			overlay.isDragging &&
+			overlayPointerId === event.pointerId
+		) {
 			const point = renderer.getOverlayPoint(event.clientX, event.clientY);
 			if (point) {
 				overlay.updateOverlayDrag(point);
@@ -140,12 +148,12 @@
 			return;
 		}
 
-		if (overlayAvailable && overlay.overlayMode) {
+		if (canUseVisualControls && overlayAvailable && overlay.overlayMode) {
 			overlayCursor =
 				renderer.getOverlayPointerTarget(event.clientX, event.clientY)?.cursor ?? null;
 		}
 
-		if (isDraggingCrop && cropPointerId === event.pointerId) {
+		if (canUseVisualControls && isDraggingCrop && cropPointerId === event.pointerId) {
 			const point = renderer.getCropPoint(event.clientX, event.clientY);
 			if (point) {
 				crop.updateCropDrag(point);
@@ -153,7 +161,7 @@
 			return;
 		}
 
-		if (crop.cropMode && !isPanningPreview) {
+		if (canUseVisualControls && crop.cropMode && !isPanningPreview) {
 			cropCursor = renderer.getCropPointerTarget(event.clientX, event.clientY)?.cursor ?? null;
 		}
 
@@ -167,7 +175,12 @@
 	}
 
 	function endPreviewPan(event: PointerEvent) {
-		if (overlayAvailable && overlay.isDragging && overlayPointerId === event.pointerId) {
+		if (
+			canUseVisualControls &&
+			overlayAvailable &&
+			overlay.isDragging &&
+			overlayPointerId === event.pointerId
+		) {
 			overlayPointerId = null;
 			overlay.endOverlayDrag();
 			(event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
@@ -277,7 +290,7 @@
 		</div>
 	{/if}
 
-	{#if crop.cropMode && crop.draftCrop}
+	{#if canUseVisualControls && crop.cropMode && crop.draftCrop}
 		<CropAspectBar
 			cropAspect={crop.cropAspect}
 			hasCropDimensions={crop.hasCropDimensions}
@@ -287,7 +300,7 @@
 		/>
 	{/if}
 
-	{#if overlayAvailable && overlay.overlayMode && overlay.overlay}
+	{#if canUseVisualControls && overlayAvailable && overlay.overlayMode && overlay.overlay}
 		<OverlayControlsBar
 			overlay={overlay.overlay}
 			onReplace={chooseOverlayImage}
@@ -298,7 +311,7 @@
 		/>
 	{/if}
 
-	{#if !isAudio}
+	{#if canUseVisualControls}
 		<PreviewToolbar
 			{controlsDisabled}
 			{flipHorizontal}
@@ -319,9 +332,11 @@
 		/>
 	{/if}
 
-	<PreviewZoomToolbar
-		disabled={!canNavigatePreview}
-		onZoomIn={() => renderer.zoomPreviewBy(1)}
-		onZoomOut={() => renderer.zoomPreviewBy(-1)}
-	/>
+	{#if canUseVisualControls}
+		<PreviewZoomToolbar
+			disabled={!canNavigatePreview}
+			onZoomIn={() => renderer.zoomPreviewBy(1)}
+			onZoomOut={() => renderer.zoomPreviewBy(-1)}
+		/>
+	{/if}
 </div>
