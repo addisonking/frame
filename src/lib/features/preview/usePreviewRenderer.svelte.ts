@@ -5,9 +5,10 @@ import {
 	DEFAULT_PREVIEW_ZOOM,
 	MAX_PREVIEW_ZOOM,
 	MIN_PREVIEW_ZOOM,
+	PREVIEW_BUTTON_ZOOM_STEP,
 	PREVIEW_TRANSFORM_EPSILON,
 	PREVIEW_TRANSFORM_LERP,
-	PREVIEW_ZOOM_STEP,
+	PREVIEW_WHEEL_ZOOM_STEP,
 	clampPreviewTransform,
 	clampValue,
 	defaultPreviewTransform,
@@ -634,7 +635,7 @@ export function createPreviewRenderer() {
 
 		const oldZoom = previewTransform.zoom;
 		const nextZoom = clampValue(
-			oldZoom * (deltaY < 0 ? PREVIEW_ZOOM_STEP : 1 / PREVIEW_ZOOM_STEP),
+			oldZoom * (deltaY < 0 ? PREVIEW_WHEEL_ZOOM_STEP : 1 / PREVIEW_WHEEL_ZOOM_STEP),
 			MIN_PREVIEW_ZOOM,
 			MAX_PREVIEW_ZOOM
 		);
@@ -655,7 +656,7 @@ export function createPreviewRenderer() {
 	function zoomPreviewBy(direction: 1 | -1) {
 		const oldZoom = previewTransform.zoom;
 		const nextZoom = clampValue(
-			oldZoom * (direction > 0 ? PREVIEW_ZOOM_STEP : 1 / PREVIEW_ZOOM_STEP),
+			oldZoom * (direction > 0 ? PREVIEW_BUTTON_ZOOM_STEP : 1 / PREVIEW_BUTTON_ZOOM_STEP),
 			MIN_PREVIEW_ZOOM,
 			MAX_PREVIEW_ZOOM
 		);
