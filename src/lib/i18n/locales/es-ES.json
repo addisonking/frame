@@ -15,7 +15,8 @@
 		"size": "Tamaño",
 		"state": "Estado",
 		"target": "Objetivo",
-		"actions": "Acciones"
+		"actions": "Acciones",
+		"done": "Hecho"
 	},
 	"titlebar": {
 		"close": "Cerrar",
@@ -252,6 +253,22 @@
 		"apply": "Aplicar",
 		"reset": "Restablecer",
 		"free": "Gratis"
+	},
+	"toolbar": {
+		"rotate": "Girar",
+		"flip-horizontal": "Voltear horizontalmente",
+		"flip-vertical": "Voltear verticalmente",
+		"crop": "Recortar",
+		"overlay": "Superposición"
+	},
+	"preview": {
+		"replace": "Sustituir la imagen superpuesta",
+		"decrease": "Reducir el tamaño de la imagen superpuesta",
+		"increase": "Aumentar el tamaño de la imagen superpuesta",
+		"opacity": "Opacidad de la capa superpuesta",
+		"remove": "Eliminar la imagen superpuesta",
+		"zoom-in": "Aumentar",
+		"zoom-out": "Alejar"
 	},
 	"encodingSpeed": {
 		"ultrafast": "Ultrarrápido",

@@ -3,11 +3,14 @@
 	import { convertFileSrc } from '@tauri-apps/api/core';
 	import { cn } from '$lib/utils/cn';
 	import CropAspectBar from './CropAspectBar.svelte';
+	import OverlayControlsBar from './OverlayControlsBar.svelte';
 	import PreviewToolbar from './PreviewToolbar.svelte';
 	import PreviewZoomToolbar from './PreviewZoomToolbar.svelte';
+	import { openNativeFileDialog } from '$lib/services/dialog';
 	import { IconSpinner } from '$lib/icons';
 	import type {
 		PreviewCropController,
+		PreviewOverlayController,
 		PreviewPlaybackController,
 		PreviewRendererController
 	} from '$lib/features/preview';
@@ -17,19 +20,23 @@
 		mediaKind,
 		renderer,
 		crop,
+		overlay,
 		playback,
 		controlsDisabled,
 		flipHorizontal,
-		flipVertical
+		flipVertical,
+		overlayAvailable
 	}: {
 		filePath: string;
 		mediaKind: 'unknown' | 'video' | 'audio' | 'image';
 		renderer: PreviewRendererController;
 		crop: PreviewCropController;
+		overlay: PreviewOverlayController;
 		playback: PreviewPlaybackController;
 		controlsDisabled: boolean;
 		flipHorizontal: boolean;
 		flipVertical: boolean;
+		overlayAvailable: boolean;
 	} = $props();
 
 	let wrapperRef = $state<HTMLDivElement | undefined>();
@@ -38,8 +45,10 @@
 	let isPanningPreview = $state(false);
 	let isDraggingCrop = $state(false);
 	let cropCursor = $state<string | null>(null);
+	let overlayCursor = $state<string | null>(null);
 	let panPointerId: number | null = null;
 	let cropPointerId: number | null = null;
+	let overlayPointerId: number | null = null;
 	let lastPanX = 0;
 	let lastPanY = 0;
 	let suppressPreviewClick = false;
@@ -83,6 +92,19 @@
 	}
 
 	function beginPreviewPan(event: PointerEvent) {
+		if (overlayAvailable && overlay.overlayMode) {
+			const overlayTarget = renderer.getOverlayPointerTarget(event.clientX, event.clientY);
+			if (overlayTarget) {
+				event.preventDefault();
+				event.stopPropagation();
+				suppressPreviewClick = true;
+				overlayPointerId = event.pointerId;
+				overlay.beginOverlayDrag(overlayTarget.handle, overlayTarget.point);
+				(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+				return;
+			}
+		}
+
 		if (crop.cropMode) {
 			const cropTarget = renderer.getCropPointerTarget(event.clientX, event.clientY);
 			if (cropTarget) {
@@ -110,6 +132,19 @@
 	}
 
 	function handlePreviewPan(event: PointerEvent) {
+		if (overlayAvailable && overlay.isDragging && overlayPointerId === event.pointerId) {
+			const point = renderer.getOverlayPoint(event.clientX, event.clientY);
+			if (point) {
+				overlay.updateOverlayDrag(point);
+			}
+			return;
+		}
+
+		if (overlayAvailable && overlay.overlayMode) {
+			overlayCursor =
+				renderer.getOverlayPointerTarget(event.clientX, event.clientY)?.cursor ?? null;
+		}
+
 		if (isDraggingCrop && cropPointerId === event.pointerId) {
 			const point = renderer.getCropPoint(event.clientX, event.clientY);
 			if (point) {
@@ -132,6 +167,15 @@
 	}
 
 	function endPreviewPan(event: PointerEvent) {
+		if (overlayAvailable && overlay.isDragging && overlayPointerId === event.pointerId) {
+			overlayPointerId = null;
+			overlay.endOverlayDrag();
+			(event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
+			overlayCursor =
+				renderer.getOverlayPointerTarget(event.clientX, event.clientY)?.cursor ?? null;
+			return;
+		}
+
 		if (isDraggingCrop && cropPointerId === event.pointerId) {
 			isDraggingCrop = false;
 			cropPointerId = null;
@@ -146,6 +190,35 @@
 		isPanningPreview = false;
 		panPointerId = null;
 		(event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
+	}
+
+	async function chooseOverlayImage() {
+		if (controlsDisabled || !overlayAvailable) return;
+
+		const selected = await openNativeFileDialog({
+			title: 'Choose overlay image',
+			filters: [
+				{
+					name: 'Images',
+					extensions: ['png', 'jpg', 'jpeg', 'webp']
+				}
+			]
+		});
+
+		if (typeof selected === 'string') {
+			overlay.setOverlayFromPath(selected);
+		}
+	}
+
+	async function handleToggleOverlay() {
+		if (!overlayAvailable) return;
+
+		if (overlay.overlay) {
+			overlay.toggleOverlayMode();
+			return;
+		}
+
+		await chooseOverlayImage();
 	}
 </script>
 
@@ -166,9 +239,11 @@
 				canNavigatePreview && renderer.hasPreviewTransform && 'cursor-grab active:cursor-grabbing'
 			)}
 			bind:this={wrapperRef}
-			style:cursor={crop.cropMode
-				? (cropCursor ?? (renderer.hasPreviewTransform ? 'grab' : 'default'))
-				: null}
+			style:cursor={overlay.overlayMode
+				? (overlayCursor ?? 'default')
+				: crop.cropMode
+					? (cropCursor ?? (renderer.hasPreviewTransform ? 'grab' : 'default'))
+					: null}
 			onpointerdown={beginPreviewPan}
 			onpointermove={handlePreviewPan}
 			onpointerup={endPreviewPan}
@@ -212,6 +287,17 @@
 		/>
 	{/if}
 
+	{#if overlayAvailable && overlay.overlayMode && overlay.overlay}
+		<OverlayControlsBar
+			overlay={overlay.overlay}
+			onReplace={chooseOverlayImage}
+			onOpacity={overlay.setOpacity}
+			onSize={(direction) => overlay.nudgeSize(direction, renderer.getOverlayHeightRatio())}
+			onRemove={overlay.removeOverlay}
+			onDone={() => overlay.setOverlayMode(false)}
+		/>
+	{/if}
+
 	{#if !isAudio}
 		<PreviewToolbar
 			{controlsDisabled}
@@ -219,10 +305,17 @@
 			{flipVertical}
 			cropMode={crop.cropMode}
 			appliedCrop={crop.appliedCrop}
+			overlayMode={overlay.overlayMode}
+			hasOverlay={Boolean(overlay.overlay)}
+			{overlayAvailable}
 			hasCropDimensions={crop.hasCropDimensions}
 			onRotate={crop.handleRotateToggle}
 			onToggleFlip={crop.toggleFlip}
-			onToggleCrop={crop.toggleCropMode}
+			onToggleCrop={() => {
+				overlay.setOverlayMode(false);
+				crop.toggleCropMode();
+			}}
+			onToggleOverlay={handleToggleOverlay}
 		/>
 	{/if}
 

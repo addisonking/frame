@@ -15,7 +15,8 @@
 		"size": "Größe",
 		"state": "Bundesstaat",
 		"target": "Ziel",
-		"actions": "Maßnahmen"
+		"actions": "Maßnahmen",
+		"done": "Fertig"
 	},
 	"titlebar": {
 		"close": "Schließen",
@@ -252,6 +253,22 @@
 		"apply": "Bewerben",
 		"reset": "Zurücksetzen",
 		"free": "Kostenlos"
+	},
+	"toolbar": {
+		"rotate": "Drehen",
+		"flip-horizontal": "Horizontal spiegeln",
+		"flip-vertical": "Vertikal spiegeln",
+		"crop": "Bild zuschneiden",
+		"overlay": "Überlagerung"
+	},
+	"preview": {
+		"replace": "Overlay-Bild ersetzen",
+		"decrease": "Größe des Overlay-Bildes verringern",
+		"increase": "Größe des Overlay-Bildes vergrößern",
+		"opacity": "Deckkraft der Überlagerung",
+		"remove": "Überlagerungsbild entfernen",
+		"zoom-in": "Vergrößern",
+		"zoom-out": "Vergrößern"
 	},
 	"encodingSpeed": {
 		"ultrafast": "Ultraschnell",

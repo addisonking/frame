@@ -15,7 +15,8 @@
 		"size": "크기",
 		"state": "주",
 		"target": "대상",
-		"actions": "행동"
+		"actions": "행동",
+		"done": "완료"
 	},
 	"titlebar": {
 		"close": "닫기",
@@ -252,6 +253,22 @@
 		"apply": "지원하다",
 		"reset": "재설정",
 		"free": "무료"
+	},
+	"toolbar": {
+		"rotate": "회전",
+		"flip-horizontal": "수평 반전",
+		"flip-vertical": "세로 회전",
+		"crop": "자르기",
+		"overlay": "오버레이"
+	},
+	"preview": {
+		"replace": "오버레이 이미지 교체",
+		"decrease": "오버레이 이미지 크기 줄이기",
+		"increase": "오버레이 이미지 크기 늘리기",
+		"opacity": "오버레이 투명도",
+		"remove": "오버레이 이미지 제거",
+		"zoom-in": "확대",
+		"zoom-out": "축소"
 	},
 	"encodingSpeed": {
 		"ultrafast": "초고속",

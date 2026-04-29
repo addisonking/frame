@@ -160,9 +160,12 @@
 										rotation={selectedFile.config.rotation}
 										flipHorizontal={selectedFile.config.flipHorizontal}
 										flipVertical={selectedFile.config.flipVertical}
+										processingMode={selectedFile.config.processingMode}
+										container={selectedFile.config.container}
 										onSave={fileListManager.handleSaveTrim}
 										onUpdateConfig={fileListManager.updateSelectedConfig}
 										initialCrop={selectedFile.config.crop}
+										initialOverlay={selectedFile.config.overlay}
 										sourceWidth={selectedFile.metadata?.width}
 										sourceHeight={selectedFile.metadata?.height}
 										controlsDisabled={selectedFileLocked}

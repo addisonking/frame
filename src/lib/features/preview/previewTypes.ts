@@ -1,4 +1,5 @@
 import type { CropRect } from '$lib/utils/crop';
+import type { OverlaySettings } from '$lib/types';
 
 export type PreviewMediaKind = 'unknown' | 'video' | 'audio' | 'image';
 
@@ -10,6 +11,8 @@ export interface PreviewPresentationState {
 	cropMode: boolean;
 	appliedCrop: CropRect | null;
 	draftCrop: CropRect | null;
+	overlayMode: boolean;
+	overlay: OverlaySettings | null;
 	sourceWidth?: number;
 	sourceHeight?: number;
 }

@@ -26,7 +26,6 @@
 >
 	{#each ASPECT_OPTIONS as option (option.id)}
 		<Button
-			size="sm"
 			variant={cropAspect === option.id ? 'default' : 'ghost'}
 			onclick={() => onSelectAspect(option.id)}
 		>
@@ -34,8 +33,8 @@
 		</Button>
 	{/each}
 	<div class="h-4 w-px bg-frame-gray-200"></div>
-	<Button size="sm" variant="ghost" onclick={onReset}>{$_('crop.reset')}</Button>
-	<Button size="sm" onclick={onApply} disabled={!hasCropDimensions}>
+	<Button variant="ghost" onclick={onReset}>{$_('crop.reset')}</Button>
+	<Button onclick={onApply} disabled={!hasCropDimensions}>
 		{$_('crop.apply')}
 	</Button>
 </div>

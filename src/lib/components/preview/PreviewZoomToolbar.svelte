@@ -1,6 +1,8 @@
 <script lang="ts">
 	import Button from '$lib/components/ui/Button.svelte';
 	import { IconMinus, IconPlus } from '$lib/icons';
+	import { _ } from '$lib/i18n';
+	import Tooltip from '$lib/components/ui/Tooltip.svelte';
 
 	let {
 		disabled,
@@ -19,10 +21,14 @@
 	onmousedown={(event) => event.stopPropagation()}
 	role="presentation"
 >
-	<Button size="icon" variant="ghost" onclick={onZoomOut} {disabled}>
-		<IconMinus size={16} />
-	</Button>
-	<Button size="icon" variant="ghost" onclick={onZoomIn} {disabled}>
-		<IconPlus size={16} />
-	</Button>
+	<Tooltip content={$_(`preview.zoom-out`)}>
+		<Button size="icon" variant="ghost" onclick={onZoomOut} {disabled}>
+			<IconMinus size={16} />
+		</Button>
+	</Tooltip>
+	<Tooltip content={$_(`preview.zoom-in`)}>
+		<Button size="icon" variant="ghost" onclick={onZoomIn} {disabled}>
+			<IconPlus size={16} />
+		</Button>
+	</Tooltip>
 </div>

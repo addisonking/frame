@@ -5,6 +5,7 @@
 	import type { ConversionConfig, CropSettings, MetadataStatus } from '$lib/types';
 	import {
 		createPreviewCrop,
+		createPreviewOverlay,
 		createPreviewPlayback,
 		createPreviewRenderer
 	} from '$lib/features/preview';
@@ -20,10 +21,13 @@
 		rotation = '0',
 		flipHorizontal = false,
 		flipVertical = false,
+		processingMode = 'reencode',
+		container,
 		onSave,
 		onUpdateConfig,
 		controlsDisabled = false,
 		initialCrop = null,
+		initialOverlay = null,
 		sourceWidth,
 		sourceHeight
 	}: {
@@ -35,10 +39,13 @@
 		rotation?: ConversionConfig['rotation'];
 		flipHorizontal?: boolean;
 		flipVertical?: boolean;
+		processingMode?: ConversionConfig['processingMode'];
+		container?: ConversionConfig['container'];
 		onSave: (start?: string, end?: string) => void;
 		onUpdateConfig?: (config: Partial<ConversionConfig>) => void;
 		controlsDisabled?: boolean;
 		initialCrop?: CropSettings | null;
+		initialOverlay?: ConversionConfig['overlay'];
 		sourceWidth?: number;
 		sourceHeight?: number;
 	} = $props();
@@ -48,6 +55,11 @@
 	);
 	const isImage = $derived(previewMediaKind === 'image');
 	const trimDisabled = $derived(controlsDisabled || isImage || previewMediaKind === 'unknown');
+	const overlayAvailable = $derived(
+		previewMediaKind === 'video' &&
+			processingMode !== 'copy' &&
+			(container ?? '').toLowerCase() !== 'gif'
+	);
 
 	const playback = createPreviewPlayback({
 		isImage: () => previewMediaKind === 'image',
@@ -66,6 +78,16 @@
 
 	const renderer = createPreviewRenderer();
 
+	const overlay = createPreviewOverlay({
+		getControlsDisabled: () => controlsDisabled,
+		onUpdateConfig: (config) => onUpdateConfig?.(config),
+		onDeactivateCrop: () => {
+			if (crop.cropMode) {
+				crop.toggleCropMode();
+			}
+		}
+	});
+
 	$effect(() => {
 		const nextStartTime = initialStartTime;
 		const nextEndTime = initialEndTime;
@@ -78,6 +100,11 @@
 		void flipHorizontal;
 		void flipVertical;
 		untrack(() => crop.syncInitialCrop(initialCrop));
+	});
+
+	$effect(() => {
+		const nextOverlay = initialOverlay;
+		untrack(() => overlay.syncInitialOverlay(nextOverlay));
 	});
 
 	$effect(() => {
@@ -102,6 +129,9 @@
 		const cropMode = crop.cropMode;
 		const appliedCrop = crop.appliedCrop;
 		const draftCrop = crop.draftCrop;
+		const overlayMode = overlay.overlayMode;
+		const nextOverlay = overlay.overlay;
+		const canUseOverlay = overlayAvailable;
 		const nextSourceWidth = sourceWidth;
 		const nextSourceHeight = sourceHeight;
 		untrack(() =>
@@ -113,6 +143,8 @@
 				cropMode,
 				appliedCrop,
 				draftCrop,
+				overlayMode: canUseOverlay && overlayMode,
+				overlay: canUseOverlay ? nextOverlay : null,
 				sourceWidth: nextSourceWidth,
 				sourceHeight: nextSourceHeight
 			})
@@ -134,10 +166,12 @@
 		mediaKind={previewMediaKind}
 		{renderer}
 		{crop}
+		{overlay}
 		{playback}
 		{controlsDisabled}
 		{flipHorizontal}
 		{flipVertical}
+		{overlayAvailable}
 	/>
 	<PreviewTimeline {playback} {trimDisabled} {isImage} />
 </div>

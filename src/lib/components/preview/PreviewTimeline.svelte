@@ -7,6 +7,7 @@
 	import { cn } from '$lib/utils/cn';
 	import type { PreviewPlaybackController } from '$lib/features/preview';
 	import { formatTime } from '$lib/features/preview';
+	import Tooltip from '$lib/components/ui/Tooltip.svelte';
 
 	let {
 		playback,
@@ -158,18 +159,20 @@
 		</div>
 		<div class="space-y-1.5">
 			<Label>&nbsp;</Label>
-			<Button
-				size="icon"
-				variant="ghost"
-				onclick={() => playback.togglePlay()}
-				disabled={trimDisabled}
-			>
-				{#if playback.isPlaying}
-					<IconPause2 size={16} />
-				{:else}
-					<IconPlay size={16} />
-				{/if}
-			</Button>
+			<Tooltip content={playback.isPlaying ? $_('common.pause') : $_('common.resume')}>
+				<Button
+					size="icon"
+					variant="ghost"
+					onclick={() => playback.togglePlay()}
+					disabled={trimDisabled}
+				>
+					{#if playback.isPlaying}
+						<IconPause2 size={16} />
+					{:else}
+						<IconPlay size={16} />
+					{/if}
+				</Button>
+			</Tooltip>
 		</div>
 	</div>
 </div>

@@ -21,18 +21,28 @@ import type {
 	PreviewSource,
 	PreviewTransform
 } from './previewTypes';
+import { MAX_OVERLAY_WIDTH } from './usePreviewOverlay.svelte';
 import { getHandleCursor, type DragHandle } from '$lib/utils/crop';
 
 const CROP_BORDER_SCREEN_WIDTH = 1.25;
 const CROP_GUIDE_SCREEN_WIDTH = 1;
 const CROP_HANDLE_SCREEN_RADIUS = 5.5;
 const CROP_HIT_SCREEN_RADIUS = 12;
+const OVERLAY_BORDER_SCREEN_WIDTH = 1.25;
+const OVERLAY_HANDLE_SCREEN_RADIUS = 5.5;
+const OVERLAY_HIT_SCREEN_SIZE = 16;
 const INITIAL_VIDEO_FRAME_PRIME_SECONDS = 0.001;
 const INITIAL_VIDEO_FRAME_PRIME_TIMEOUT_MS = 700;
 
 interface CropPointerTarget {
 	handle: DragHandle;
 	point: { x: number; y: number };
+	cursor: string;
+}
+
+interface OverlayPointerTarget {
+	handle: 'move' | 'nw' | 'ne' | 'se' | 'sw';
+	point: { x: number; y: number; width: number; height: number };
 	cursor: string;
 }
 
@@ -53,15 +63,20 @@ export function createPreviewRenderer() {
 	let sprite = $state<Sprite | null>(null);
 	let cropMask = $state<Graphics | null>(null);
 	let cropOverlay = $state<Graphics | null>(null);
+	let overlaySprite = $state<Sprite | null>(null);
+	let overlayControls = $state<Graphics | null>(null);
 	let resizeObserver = $state<ResizeObserver | null>(null);
 	let texture = $state<Texture | null>(null);
+	let overlayTexture = $state<Texture | null>(null);
 	let mediaElement = $state<HTMLVideoElement | undefined>();
 	let isLoading = $state(false);
 	let error = $state<string | null>(null);
 	let frameLoopCleanup: (() => void) | null = null;
 	let currentAssetUrl = $state<string | null>(null);
+	let currentOverlayAssetUrl = $state<string | null>(null);
 	let pendingSource: PreviewSource | null = null;
 	let sourceRequestId = 0;
+	let overlayRequestId = 0;
 	let naturalWidth = $state(0);
 	let naturalHeight = $state(0);
 	let wrapperWidth = $state(0);
@@ -76,7 +91,9 @@ export function createPreviewRenderer() {
 		flipVertical: false,
 		cropMode: false,
 		appliedCrop: null,
-		draftCrop: null
+		draftCrop: null,
+		overlayMode: false,
+		overlay: null
 	});
 
 	function getSceneState() {
@@ -123,6 +140,8 @@ export function createPreviewRenderer() {
 			sprite = scene.sprite;
 			cropMask = scene.cropMask;
 			cropOverlay = scene.cropOverlay;
+			overlaySprite = scene.overlaySprite;
+			overlayControls = scene.overlayControls;
 			resizeAppToWrapper();
 			updateScene();
 		})();
@@ -162,6 +181,27 @@ export function createPreviewRenderer() {
 
 		cropMask?.clear();
 		cropOverlay?.clear();
+		if (overlaySprite) {
+			overlaySprite.visible = false;
+		}
+		overlayControls?.clear();
+	}
+
+	async function clearOverlayTexture() {
+		if (currentOverlayAssetUrl) {
+			await unloadPreviewAsset(currentOverlayAssetUrl);
+		}
+
+		overlayTexture?.destroy(false);
+		overlayTexture = null;
+		currentOverlayAssetUrl = null;
+
+		if (overlaySprite) {
+			overlaySprite.texture = Texture.EMPTY;
+			overlaySprite.visible = false;
+		}
+
+		overlayControls?.clear();
 	}
 
 	function getErrorMessage(cause: unknown) {
@@ -326,6 +366,44 @@ export function createPreviewRenderer() {
 		syncNaturalDimensions();
 		if (mediaElement) {
 			await primeInitialVideoFrame(mediaElement);
+		}
+	}
+
+	async function syncOverlayTexture() {
+		const requestId = ++overlayRequestId;
+		const nextOverlay = presentation.overlay;
+		if (!nextOverlay?.enabled || !nextOverlay.path || !app) {
+			await clearOverlayTexture();
+			updateScene();
+			return;
+		}
+
+		const assetUrl = getPreviewAssetUrl(nextOverlay.path);
+		if (currentOverlayAssetUrl === assetUrl && overlayTexture) {
+			updateScene();
+			return;
+		}
+
+		try {
+			const { texture: loaded } = await loadPreviewTexture(nextOverlay.path);
+			if (requestId !== overlayRequestId) {
+				loaded.destroy(false);
+				await unloadPreviewAsset(assetUrl);
+				return;
+			}
+
+			await clearOverlayTexture();
+			currentOverlayAssetUrl = assetUrl;
+			overlayTexture = loaded;
+			if (overlaySprite) {
+				overlaySprite.texture = loaded;
+			}
+			updateScene();
+		} catch (cause) {
+			if (requestId !== overlayRequestId) return;
+			console.error('Failed to load overlay image', cause);
+			await clearOverlayTexture();
+			updateScene();
 		}
 	}
 
@@ -581,8 +659,17 @@ export function createPreviewRenderer() {
 			stopPreviewTransformAnimation();
 		}
 
+		const previousOverlayPath = presentation.overlay?.path;
+		const nextOverlayPath = nextPresentation.overlay?.path;
+		const shouldSyncOverlay =
+			previousOverlayPath !== nextOverlayPath ||
+			presentation.overlay?.enabled !== nextPresentation.overlay?.enabled;
+
 		presentation = nextPresentation;
 		syncNaturalDimensions();
+		if (shouldSyncOverlay) {
+			void ensureApp().then(syncOverlayTexture);
+		}
 		updateScene();
 	}
 
@@ -798,6 +885,122 @@ export function createPreviewRenderer() {
 		return getCropLocalPoint(clientX, clientY, true)?.point ?? null;
 	}
 
+	function getOverlayRect() {
+		if (!presentation.overlay?.enabled || !overlayTexture) return null;
+		const transform = getRenderTransform();
+		const metrics = getSceneMetrics(getSceneState(), transform.zoom);
+		if (!metrics) return null;
+
+		const sourceWidth = overlayTexture.source.width || 1;
+		const sourceHeight = overlayTexture.source.height || 1;
+		const sourceAspect = sourceHeight / sourceWidth;
+		const maxWidth = Math.min(
+			metrics.displayedWidth * MAX_OVERLAY_WIDTH,
+			metrics.displayedHeight / sourceAspect
+		);
+		const width = Math.min(metrics.displayedWidth * presentation.overlay.width, maxWidth);
+		const height = width * sourceAspect;
+		const normalizedWidth = width / metrics.displayedWidth;
+		const normalizedHeight = height / metrics.displayedHeight;
+		const halfNormalizedWidth = Math.min(normalizedWidth / 2, 0.5);
+		const halfNormalizedHeight = Math.min(normalizedHeight / 2, 0.5);
+		const centerX = clampValue(
+			presentation.overlay.x,
+			halfNormalizedWidth,
+			1 - halfNormalizedWidth
+		);
+		const centerY = clampValue(
+			presentation.overlay.y,
+			halfNormalizedHeight,
+			1 - halfNormalizedHeight
+		);
+		const left =
+			wrapperWidth / 2 +
+			transform.offsetX -
+			metrics.displayedWidth / 2 +
+			centerX * metrics.displayedWidth -
+			width / 2;
+		const top =
+			wrapperHeight / 2 +
+			transform.offsetY -
+			metrics.displayedHeight / 2 +
+			centerY * metrics.displayedHeight -
+			height / 2;
+
+		return {
+			left,
+			top,
+			width,
+			height,
+			right: left + width,
+			bottom: top + height,
+			centerX: left + width / 2,
+			centerY: top + height / 2,
+			frameLeft: wrapperWidth / 2 + transform.offsetX - metrics.displayedWidth / 2,
+			frameTop: wrapperHeight / 2 + transform.offsetY - metrics.displayedHeight / 2,
+			frameWidth: metrics.displayedWidth,
+			frameHeight: metrics.displayedHeight
+		};
+	}
+
+	function getOverlayPoint(clientX: number, clientY: number) {
+		const rect = getOverlayRect();
+		if (!rect || !wrapperElement) return null;
+
+		const wrapperRect = wrapperElement.getBoundingClientRect();
+		const localX = clientX - wrapperRect.left;
+		const localY = clientY - wrapperRect.top;
+
+		return {
+			x: clampValue((localX - rect.frameLeft) / rect.frameWidth, 0, 1),
+			y: clampValue((localY - rect.frameTop) / rect.frameHeight, 0, 1),
+			width: rect.width / rect.frameWidth,
+			height: rect.height / rect.frameHeight
+		};
+	}
+
+	function getOverlayPointerTarget(clientX: number, clientY: number): OverlayPointerTarget | null {
+		if (!presentation.overlayMode || !presentation.overlay?.enabled) return null;
+		const rect = getOverlayRect();
+		const point = getOverlayPoint(clientX, clientY);
+		if (!rect || !point || !wrapperElement) return null;
+
+		const wrapperRect = wrapperElement.getBoundingClientRect();
+		const localX = clientX - wrapperRect.left;
+		const localY = clientY - wrapperRect.top;
+
+		const halfHit = OVERLAY_HIT_SCREEN_SIZE / 2;
+		const handles: Array<{
+			handle: OverlayPointerTarget['handle'];
+			x: number;
+			y: number;
+			cursor: string;
+		}> = [
+			{ handle: 'nw', x: rect.left, y: rect.top, cursor: 'nwse-resize' },
+			{ handle: 'ne', x: rect.right, y: rect.top, cursor: 'nesw-resize' },
+			{ handle: 'se', x: rect.right, y: rect.bottom, cursor: 'nwse-resize' },
+			{ handle: 'sw', x: rect.left, y: rect.bottom, cursor: 'nesw-resize' }
+		];
+
+		for (const handle of handles) {
+			if (Math.abs(localX - handle.x) <= halfHit && Math.abs(localY - handle.y) <= halfHit) {
+				return {
+					handle: handle.handle,
+					point,
+					cursor: handle.cursor
+				};
+			}
+		}
+
+		const inside =
+			localX >= rect.left && localX <= rect.right && localY >= rect.top && localY <= rect.bottom;
+		if (inside) {
+			return { handle: 'move', point, cursor: 'move' };
+		}
+
+		return null;
+	}
+
 	function drawCropOverlay(metrics: NonNullable<ReturnType<typeof getSceneMetrics>>) {
 		if (!cropOverlay) return;
 
@@ -864,6 +1067,32 @@ export function createPreviewRenderer() {
 		}
 	}
 
+	function drawOverlayControls(rect: NonNullable<ReturnType<typeof getOverlayRect>>) {
+		if (!overlayControls || !presentation.overlayMode) return;
+
+		overlayControls
+			.rect(rect.left, rect.top, rect.width, rect.height)
+			.stroke({ color: 0xffffff, alpha: 0.9, width: OVERLAY_BORDER_SCREEN_WIDTH });
+
+		const handles = [
+			[rect.left, rect.top],
+			[rect.left + rect.width / 2, rect.top],
+			[rect.right, rect.top],
+			[rect.right, rect.top + rect.height / 2],
+			[rect.right, rect.bottom],
+			[rect.left + rect.width / 2, rect.bottom],
+			[rect.left, rect.bottom],
+			[rect.left, rect.top + rect.height / 2]
+		] as const;
+
+		for (const [x, y] of handles) {
+			overlayControls
+				.circle(x, y, OVERLAY_HANDLE_SCREEN_RADIUS)
+				.fill(0xffffff)
+				.stroke({ color: 0x000000, alpha: 0.45, width: OVERLAY_BORDER_SCREEN_WIDTH });
+		}
+	}
+
 	function updateScene() {
 		if (
 			!app ||
@@ -873,7 +1102,9 @@ export function createPreviewRenderer() {
 			!sprite ||
 			!texture ||
 			!cropMask ||
-			!cropOverlay
+			!cropOverlay ||
+			!overlaySprite ||
+			!overlayControls
 		)
 			return;
 
@@ -931,14 +1162,31 @@ export function createPreviewRenderer() {
 		}
 
 		drawCropOverlay(metrics);
+		overlayControls.clear();
+		if (presentation.overlay?.enabled && overlayTexture) {
+			const rect = getOverlayRect();
+			if (rect) {
+				overlaySprite.texture = overlayTexture;
+				overlaySprite.position.set(rect.centerX, rect.centerY);
+				overlaySprite.width = rect.width;
+				overlaySprite.height = rect.height;
+				overlaySprite.alpha = presentation.overlay.opacity;
+				overlaySprite.visible = true;
+				drawOverlayControls(rect);
+			}
+		} else {
+			overlaySprite.visible = false;
+		}
 		app.render();
 	}
 
 	function destroy() {
 		sourceRequestId += 1;
+		overlayRequestId += 1;
 		stopPreviewTransformAnimation();
 		resizeObserver?.disconnect();
 		void clearTexture();
+		void clearOverlayTexture();
 		app?.destroy(true, { children: true, texture: true });
 		app = null;
 		spriteContainer = null;
@@ -947,6 +1195,8 @@ export function createPreviewRenderer() {
 		sprite = null;
 		cropMask = null;
 		cropOverlay = null;
+		overlaySprite = null;
+		overlayControls = null;
 	}
 
 	return {
@@ -981,6 +1231,15 @@ export function createPreviewRenderer() {
 		setPresentationState,
 		getCropPointerTarget,
 		getCropPoint,
+		getOverlayPointerTarget,
+		getOverlayPoint,
+		getOverlayHeightRatio() {
+			const rect = getOverlayRect();
+			if (!rect) return undefined;
+			const width = rect.width / rect.frameWidth;
+			if (!width) return undefined;
+			return rect.height / rect.frameHeight / width;
+		},
 		zoomPreviewAt,
 		zoomPreviewBy,
 		panPreviewBy,
