@@ -26,12 +26,20 @@ const CROP_BORDER_SCREEN_WIDTH = 1.25;
 const CROP_GUIDE_SCREEN_WIDTH = 1;
 const CROP_HANDLE_SCREEN_RADIUS = 5.5;
 const CROP_HIT_SCREEN_RADIUS = 12;
+const INITIAL_VIDEO_FRAME_PRIME_SECONDS = 0.001;
+const INITIAL_VIDEO_FRAME_PRIME_TIMEOUT_MS = 700;
 
 interface CropPointerTarget {
 	handle: DragHandle;
 	point: { x: number; y: number };
 	cursor: string;
 }
+
+type PreviewVideoTextureSource = {
+	resource?: unknown;
+	update?: () => void;
+	updateFrame?: () => void;
+};
 
 export function createPreviewRenderer() {
 	let canvasElement = $state<HTMLCanvasElement | undefined>();
@@ -233,7 +241,68 @@ export function createPreviewRenderer() {
 		updateScene();
 	}
 
-	function bindTexture(nextTexture: Texture) {
+	function waitForVideoEvent(video: HTMLVideoElement, events: string[], timeoutMs: number) {
+		return new Promise<void>((resolve) => {
+			let timeoutId = 0;
+
+			const cleanup = () => {
+				if (timeoutId) {
+					window.clearTimeout(timeoutId);
+				}
+
+				for (const event of events) {
+					video.removeEventListener(event, done);
+				}
+			};
+			const done = () => {
+				cleanup();
+				resolve();
+			};
+
+			for (const event of events) {
+				video.addEventListener(event, done, { once: true });
+			}
+
+			timeoutId = window.setTimeout(done, timeoutMs);
+		});
+	}
+
+	async function primeInitialVideoFrame(video: HTMLVideoElement) {
+		if (mediaElement !== video) return;
+
+		if (video.readyState < video.HAVE_CURRENT_DATA) {
+			await waitForVideoEvent(
+				video,
+				['loadeddata', 'canplay', 'canplaythrough'],
+				INITIAL_VIDEO_FRAME_PRIME_TIMEOUT_MS
+			);
+		}
+
+		if (mediaElement !== video) return;
+
+		const duration = Number.isFinite(video.duration) ? video.duration : 0;
+		const canPrimeWithSeek =
+			video.readyState >= video.HAVE_METADATA &&
+			duration > INITIAL_VIDEO_FRAME_PRIME_SECONDS &&
+			video.currentTime === 0;
+
+		if (canPrimeWithSeek) {
+			video.currentTime = INITIAL_VIDEO_FRAME_PRIME_SECONDS;
+			await waitForVideoEvent(video, ['seeked'], INITIAL_VIDEO_FRAME_PRIME_TIMEOUT_MS);
+		}
+
+		if (mediaElement !== video) return;
+
+		refreshVideoFrame(video);
+		await new Promise<void>((resolve) => {
+			window.requestAnimationFrame(() => {
+				refreshVideoFrame(video);
+				resolve();
+			});
+		});
+	}
+
+	async function bindTexture(nextTexture: Texture) {
 		texture = nextTexture;
 		if (nextTexture.source.resource instanceof HTMLVideoElement) {
 			mediaElement = nextTexture.source.resource;
@@ -254,6 +323,24 @@ export function createPreviewRenderer() {
 		}
 
 		syncNaturalDimensions();
+		if (mediaElement) {
+			await primeInitialVideoFrame(mediaElement);
+		}
+	}
+
+	function refreshVideoFrame(video: HTMLVideoElement) {
+		if (!app || mediaElement !== video) return;
+
+		const source = texture?.source as PreviewVideoTextureSource | undefined;
+		if (source?.resource === video) {
+			if (typeof source.updateFrame === 'function') {
+				source.updateFrame();
+			} else if (typeof source.update === 'function') {
+				source.update();
+			}
+		}
+
+		app.render();
 	}
 
 	function attachFrameLoop(video: HTMLVideoElement) {
@@ -262,10 +349,12 @@ export function createPreviewRenderer() {
 
 		if (typeof video.requestVideoFrameCallback === 'function') {
 			let callbackId = 0;
+			let pendingFrameCallbackId = 0;
+			let pendingRenderFrame = 0;
 
 			const onFrame = () => {
 				if (!app || mediaElement !== video) return;
-				app.render();
+				refreshVideoFrame(video);
 				callbackId = video.requestVideoFrameCallback(onFrame);
 			};
 
@@ -279,7 +368,37 @@ export function createPreviewRenderer() {
 				video.cancelVideoFrameCallback(callbackId);
 				callbackId = 0;
 			};
-			const renderCurrentFrame = () => app?.render();
+			const cancelPendingFrameRefresh = () => {
+				if (pendingFrameCallbackId) {
+					video.cancelVideoFrameCallback(pendingFrameCallbackId);
+					pendingFrameCallbackId = 0;
+				}
+
+				if (pendingRenderFrame) {
+					window.cancelAnimationFrame(pendingRenderFrame);
+					pendingRenderFrame = 0;
+				}
+			};
+			const renderCurrentFrame = () => {
+				refreshVideoFrame(video);
+
+				if (!video.paused && !video.ended) return;
+
+				if (pendingFrameCallbackId) {
+					video.cancelVideoFrameCallback(pendingFrameCallbackId);
+				}
+				pendingFrameCallbackId = video.requestVideoFrameCallback(() => {
+					pendingFrameCallbackId = 0;
+					refreshVideoFrame(video);
+				});
+
+				if (!pendingRenderFrame) {
+					pendingRenderFrame = window.requestAnimationFrame(() => {
+						pendingRenderFrame = 0;
+						refreshVideoFrame(video);
+					});
+				}
+			};
 
 			video.addEventListener('play', start);
 			video.addEventListener('pause', stop);
@@ -287,7 +406,10 @@ export function createPreviewRenderer() {
 			video.addEventListener('seeking', renderCurrentFrame);
 			video.addEventListener('seeked', renderCurrentFrame);
 			video.addEventListener('timeupdate', renderCurrentFrame);
+			video.addEventListener('loadedmetadata', renderCurrentFrame);
 			video.addEventListener('loadeddata', renderCurrentFrame);
+			video.addEventListener('canplay', renderCurrentFrame);
+			video.addEventListener('canplaythrough', renderCurrentFrame);
 
 			if (!video.paused) {
 				start();
@@ -295,21 +417,26 @@ export function createPreviewRenderer() {
 
 			frameLoopCleanup = () => {
 				stop();
+				cancelPendingFrameRefresh();
 				video.removeEventListener('play', start);
 				video.removeEventListener('pause', stop);
 				video.removeEventListener('ended', stop);
 				video.removeEventListener('seeking', renderCurrentFrame);
 				video.removeEventListener('seeked', renderCurrentFrame);
 				video.removeEventListener('timeupdate', renderCurrentFrame);
+				video.removeEventListener('loadedmetadata', renderCurrentFrame);
 				video.removeEventListener('loadeddata', renderCurrentFrame);
+				video.removeEventListener('canplay', renderCurrentFrame);
+				video.removeEventListener('canplaythrough', renderCurrentFrame);
 			};
 			return;
 		}
 
 		let rafId = 0;
+		let pendingRenderFrame = 0;
 		const tick = () => {
 			if (!app || mediaElement !== video) return;
-			app.render();
+			refreshVideoFrame(video);
 			if (!video.paused && !video.ended) {
 				rafId = window.requestAnimationFrame(tick);
 			}
@@ -323,7 +450,22 @@ export function createPreviewRenderer() {
 			window.cancelAnimationFrame(rafId);
 			rafId = 0;
 		};
-		const renderCurrentFrame = () => app?.render();
+		const cancelPendingFrameRefresh = () => {
+			if (!pendingRenderFrame) return;
+			window.cancelAnimationFrame(pendingRenderFrame);
+			pendingRenderFrame = 0;
+		};
+		const renderCurrentFrame = () => {
+			refreshVideoFrame(video);
+
+			if (!video.paused && !video.ended) return;
+			if (pendingRenderFrame) return;
+
+			pendingRenderFrame = window.requestAnimationFrame(() => {
+				pendingRenderFrame = 0;
+				refreshVideoFrame(video);
+			});
+		};
 
 		video.addEventListener('play', start);
 		video.addEventListener('pause', stop);
@@ -331,7 +473,10 @@ export function createPreviewRenderer() {
 		video.addEventListener('seeking', renderCurrentFrame);
 		video.addEventListener('seeked', renderCurrentFrame);
 		video.addEventListener('timeupdate', renderCurrentFrame);
+		video.addEventListener('loadedmetadata', renderCurrentFrame);
 		video.addEventListener('loadeddata', renderCurrentFrame);
+		video.addEventListener('canplay', renderCurrentFrame);
+		video.addEventListener('canplaythrough', renderCurrentFrame);
 
 		if (!video.paused) {
 			start();
@@ -339,13 +484,17 @@ export function createPreviewRenderer() {
 
 		frameLoopCleanup = () => {
 			stop();
+			cancelPendingFrameRefresh();
 			video.removeEventListener('play', start);
 			video.removeEventListener('pause', stop);
 			video.removeEventListener('ended', stop);
 			video.removeEventListener('seeking', renderCurrentFrame);
 			video.removeEventListener('seeked', renderCurrentFrame);
 			video.removeEventListener('timeupdate', renderCurrentFrame);
+			video.removeEventListener('loadedmetadata', renderCurrentFrame);
 			video.removeEventListener('loadeddata', renderCurrentFrame);
+			video.removeEventListener('canplay', renderCurrentFrame);
+			video.removeEventListener('canplaythrough', renderCurrentFrame);
 		};
 	}
 
@@ -398,8 +547,9 @@ export function createPreviewRenderer() {
 
 			currentAssetUrl = assetUrl;
 			pendingSource = null;
+			await bindTexture(loaded);
+			if (requestId !== sourceRequestId) return;
 			isLoading = false;
-			bindTexture(loaded);
 		} catch (cause) {
 			if (requestId !== sourceRequestId) return;
 			isLoading = false;
