@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-04-30
+
 ### Added
 
 - **Pixi Preview Renderer:** Added a Pixi.js-backed preview renderer for video/image presentation, including WebGPU preference, explicit frame rendering for paused/seeked video frames, and HiDPI canvas density capped at `2x`.
