@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.2] - 2026-05-01
+
+### Fixed
+
+- **Preview Image Loading:** Fixed image sources and image overlays in the Pixi preview by decoding local files through the Tauri filesystem API and `ImageBitmap`, avoiding stalled Pixi image loads and WebGPU cross-origin upload failures in dev and packaged builds.
+- **Preview WebGPU Rendering:** Centralized Pixi preview imports through a local bootstrap module with the required WebGPU uniform upload compatibility patch, and isolated overlay rendering in its own render group to keep overlay controls rendering correctly.
+
 ## [0.29.1] - 2026-04-30
 
 ### Fixed

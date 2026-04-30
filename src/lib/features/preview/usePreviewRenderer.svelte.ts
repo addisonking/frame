@@ -1,4 +1,4 @@
-import { Application, Container, Graphics, Sprite, Texture } from 'pixi.js';
+import { Application, Container, Graphics, Sprite, Texture } from './previewPixi';
 import { getPreviewAssetUrl, loadPreviewTexture, unloadPreviewAsset } from './previewAssets';
 import { createPreviewPixiScene } from './previewPixiApp';
 import {
@@ -464,7 +464,9 @@ export function createPreviewRenderer() {
 		}
 
 		try {
-			const { texture: loaded } = await loadPreviewTexture(nextOverlay.path);
+			const { texture: loaded } = await loadPreviewTexture(nextOverlay.path, {
+				mediaKind: 'image'
+			});
 			if (requestId !== overlayRequestId) {
 				loaded.destroy(false);
 				await unloadPreviewAsset(assetUrl);
@@ -700,7 +702,7 @@ export function createPreviewRenderer() {
 			resetPreviewTransform(true);
 			if (requestId !== sourceRequestId) return;
 
-			const { texture: loaded } = await loadPreviewTexture(filePath);
+			const { texture: loaded } = await loadPreviewTexture(filePath, { mediaKind });
 
 			if (requestId !== sourceRequestId) {
 				const latestAssetUrl = pendingSource ? getPreviewAssetUrl(pendingSource.filePath) : null;
@@ -1218,8 +1220,9 @@ export function createPreviewRenderer() {
 			!cropOverlay ||
 			!overlaySprite ||
 			!overlayControls
-		)
+		) {
 			return;
+		}
 
 		const effectiveTransform = clampPreviewTransform(getSceneState(), previewTransform);
 		if (
@@ -1234,7 +1237,9 @@ export function createPreviewRenderer() {
 
 		const renderTransform = renderedPreviewTransform;
 		const metrics = getSceneMetrics(getSceneState(), renderTransform.zoom);
-		if (!metrics) return;
+		if (!metrics) {
+			return;
+		}
 
 		sprite.texture = texture;
 		sprite.width = metrics.baseWidth;
@@ -1276,16 +1281,17 @@ export function createPreviewRenderer() {
 
 		drawCropOverlay(metrics);
 		overlayControls.clear();
+		let overlayRect: ReturnType<typeof getOverlayRect> = null;
 		if (presentation.overlay?.enabled && overlayTexture) {
-			const rect = getOverlayRect();
-			if (rect) {
+			overlayRect = getOverlayRect();
+			if (overlayRect) {
 				overlaySprite.texture = overlayTexture;
-				overlaySprite.position.set(rect.centerX, rect.centerY);
-				overlaySprite.width = rect.width;
-				overlaySprite.height = rect.height;
+				overlaySprite.position.set(overlayRect.centerX, overlayRect.centerY);
+				overlaySprite.width = overlayRect.width;
+				overlaySprite.height = overlayRect.height;
 				overlaySprite.alpha = presentation.overlay.opacity;
 				overlaySprite.visible = true;
-				drawOverlayControls(rect);
+				drawOverlayControls(overlayRect);
 			}
 		} else {
 			overlaySprite.visible = false;

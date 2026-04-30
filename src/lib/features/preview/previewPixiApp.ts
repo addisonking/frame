@@ -1,5 +1,4 @@
-import 'pixi.js/unsafe-eval';
-import { Application, Container, Graphics, Sprite } from 'pixi.js';
+import { Application, Container, Graphics, Sprite } from './previewPixi';
 
 export interface PreviewPixiScene {
 	app: Application;
@@ -38,6 +37,7 @@ export async function createPreviewPixiScene(
 	const sprite = new Sprite();
 	const cropMask = new Graphics();
 	const cropOverlay = new Graphics();
+	const overlayContainer = new Container({ isRenderGroup: true });
 	const overlaySprite = new Sprite();
 	const overlayControls = new Graphics();
 	sprite.anchor.set(0.5);
@@ -48,10 +48,11 @@ export async function createPreviewPixiScene(
 	rotationContainer.addChild(flipContainer);
 	spriteContainer.addChild(rotationContainer);
 	spriteContainer.addChild(cropOverlay);
+	overlayContainer.addChild(overlaySprite);
+	overlayContainer.addChild(overlayControls);
 	app.stage.addChild(spriteContainer);
 	app.stage.addChild(cropMask);
-	app.stage.addChild(overlaySprite);
-	app.stage.addChild(overlayControls);
+	app.stage.addChild(overlayContainer);
 
 	return {
 		app,
