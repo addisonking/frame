@@ -73,8 +73,8 @@ pub fn add_audio_codec_args(args: &mut Vec<String>, config: &ConversionConfig) {
     let is_lossless = lossless_audio_codecs.contains(&config.audio_codec.as_str());
 
     if !is_lossless {
-        let use_vbr = config.audio_bitrate_mode == "vbr"
-            && audio_codec_supports_vbr(&config.audio_codec);
+        let use_vbr =
+            config.audio_bitrate_mode == "vbr" && audio_codec_supports_vbr(&config.audio_codec);
         if use_vbr {
             add_audio_vbr_args(args, config);
         } else {

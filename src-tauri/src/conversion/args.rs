@@ -144,11 +144,21 @@ pub fn validate_stream_copy_compatibility(
     Ok(())
 }
 
+#[cfg(test)]
+pub fn build_ffmpeg_args(input: &str, output: &str, config: &ConversionConfig) -> Vec<String> {
+    build_ffmpeg_args_with_probe(input, output, config, None)
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "FFmpeg command assembly stays in one place to keep ordering guarantees explicit"
 )]
-pub fn build_ffmpeg_args(input: &str, output: &str, config: &ConversionConfig) -> Vec<String> {
+pub fn build_ffmpeg_args_with_probe(
+    input: &str,
+    output: &str,
+    config: &ConversionConfig,
+    probe: Option<&ProbeMetadata>,
+) -> Vec<String> {
     let mut args = Vec::new();
 
     // Hardware decode acceleration (must be before -i)
@@ -210,6 +220,9 @@ pub fn build_ffmpeg_args(input: &str, output: &str, config: &ConversionConfig) -
         }
     }
 
+    // Drop data/metadata streams (e.g. iPhone mebx) to prevent decode errors
+    args.push("-dn".to_string());
+
     let is_audio_only = is_audio_only_container(&config.container);
     let is_video_only = is_video_only_container(&config.container);
     let is_image_output = is_image_container(&config.container);
@@ -232,8 +245,15 @@ pub fn build_ffmpeg_args(input: &str, output: &str, config: &ConversionConfig) -
                 args.push(format!("0:{track_index}"));
             }
         } else if container_supports_audio(&config.container) {
-            args.push("-map".to_string());
-            args.push("0:a?".to_string());
+            if let Some(probe) = probe {
+                for track in &probe.audio_tracks {
+                    args.push("-map".to_string());
+                    args.push(format!("0:{}", track.index));
+                }
+            } else {
+                args.push("-map".to_string());
+                args.push("0:a?".to_string());
+            }
         }
 
         if !config.selected_subtitle_tracks.is_empty() {
@@ -242,8 +262,15 @@ pub fn build_ffmpeg_args(input: &str, output: &str, config: &ConversionConfig) -
                 args.push(format!("0:{track_index}"));
             }
         } else if container_supports_subtitles(&config.container) {
-            args.push("-map".to_string());
-            args.push("0:s?".to_string());
+            if let Some(probe) = probe {
+                for track in &probe.subtitle_tracks {
+                    args.push("-map".to_string());
+                    args.push(format!("0:{}", track.index));
+                }
+            } else {
+                args.push("-map".to_string());
+                args.push("0:s?".to_string());
+            }
         }
 
         args.push("-c".to_string());
@@ -257,8 +284,15 @@ pub fn build_ffmpeg_args(input: &str, output: &str, config: &ConversionConfig) -
         args.push("-vn".to_string());
 
         if config.selected_audio_tracks.is_empty() {
-            args.push("-map".to_string());
-            args.push("0:a?".to_string());
+            if let Some(probe) = probe {
+                for track in &probe.audio_tracks {
+                    args.push("-map".to_string());
+                    args.push(format!("0:{}", track.index));
+                }
+            } else {
+                args.push("-map".to_string());
+                args.push("0:a?".to_string());
+            }
         } else {
             for track_index in &config.selected_audio_tracks {
                 args.push("-map".to_string());
@@ -337,8 +371,15 @@ pub fn build_ffmpeg_args(input: &str, output: &str, config: &ConversionConfig) -
         });
 
         if config.selected_audio_tracks.is_empty() {
-            args.push("-map".to_string());
-            args.push("0:a?".to_string());
+            if let Some(probe) = probe {
+                for track in &probe.audio_tracks {
+                    args.push("-map".to_string());
+                    args.push(format!("0:{}", track.index));
+                }
+            } else {
+                args.push("-map".to_string());
+                args.push("0:a?".to_string());
+            }
         } else {
             for track_index in &config.selected_audio_tracks {
                 args.push("-map".to_string());
@@ -355,8 +396,15 @@ pub fn build_ffmpeg_args(input: &str, output: &str, config: &ConversionConfig) -
             }
             add_subtitle_codec_args(&mut args, config);
         } else if !has_burn_subtitles {
-            args.push("-map".to_string());
-            args.push("0:s?".to_string());
+            if let Some(probe) = probe {
+                for track in &probe.subtitle_tracks {
+                    args.push("-map".to_string());
+                    args.push(format!("0:{}", track.index));
+                }
+            } else {
+                args.push("-map".to_string());
+                args.push("0:s?".to_string());
+            }
             add_subtitle_codec_args(&mut args, config);
         }
     }

@@ -20,6 +20,10 @@ fn is_known_image_extension(file_path: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn is_known_codec(codec_name: Option<&str>) -> bool {
+    codec_name.is_some_and(|name| !name.eq_ignore_ascii_case("none"))
+}
+
 fn format_name_indicates_image(format_name: Option<&str>) -> bool {
     format_name.is_some_and(|raw| {
         raw.split(',').map(str::trim).any(|name| {
@@ -117,7 +121,7 @@ pub async fn probe_media_file(
     for stream in probe_data
         .streams
         .iter()
-        .filter(|s| s.codec_type == "audio")
+        .filter(|s| s.codec_type == "audio" && is_known_codec(s.codec_name.as_deref()))
     {
         let label = stream.tags.as_ref().and_then(|t| t.title.clone());
         let language = stream.tags.as_ref().and_then(|t| t.language.clone());
@@ -143,7 +147,7 @@ pub async fn probe_media_file(
     for stream in probe_data
         .streams
         .iter()
-        .filter(|s| s.codec_type == "subtitle")
+        .filter(|s| s.codec_type == "subtitle" && is_known_codec(s.codec_name.as_deref()))
     {
         let label = stream.tags.as_ref().and_then(|t| t.title.clone());
         let language = stream.tags.as_ref().and_then(|t| t.language.clone());

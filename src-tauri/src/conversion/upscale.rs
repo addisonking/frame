@@ -17,11 +17,12 @@ use crate::conversion::media_rules::{
     container_supports_audio, container_supports_subtitles, is_image_container,
 };
 use crate::conversion::types::{
-    CompletedPayload, ConversionConfig, ConversionTask, LogPayload, MetadataMode, ProgressPayload,
-    StartedPayload,
+    CompletedPayload, ConversionConfig, ConversionTask, LogPayload, MetadataMode, ProbeMetadata,
+    ProgressPayload, StartedPayload,
 };
 use crate::conversion::utils::{FRAME_REGEX, parse_time, sanitize_external_tool_path};
 
+#[cfg(test)]
 pub fn build_upscale_encode_args(
     output_frames_dir: &Path,
     source_file_path: &str,
@@ -29,6 +30,26 @@ pub fn build_upscale_encode_args(
     source_fps: f64,
     config: &ConversionConfig,
     source_pixel_format: Option<String>,
+) -> Vec<String> {
+    build_upscale_encode_args_with_probe(
+        output_frames_dir,
+        source_file_path,
+        output_path,
+        source_fps,
+        config,
+        source_pixel_format,
+        None,
+    )
+}
+
+pub fn build_upscale_encode_args_with_probe(
+    output_frames_dir: &Path,
+    source_file_path: &str,
+    output_path: &str,
+    source_fps: f64,
+    config: &ConversionConfig,
+    source_pixel_format: Option<String>,
+    probe: Option<&ProbeMetadata>,
 ) -> Vec<String> {
     let is_image_output = is_image_container(&config.container);
     let supports_audio = container_supports_audio(&config.container);
@@ -77,13 +98,23 @@ pub fn build_upscale_encode_args(
         }
     }
 
+    // Drop data/metadata streams (e.g. iPhone mebx) to prevent decode errors
+    enc_args.push("-dn".to_string());
+
     enc_args.push("-map".to_string());
     enc_args.push("0:v:0".to_string());
 
     if supports_audio {
         if config.selected_audio_tracks.is_empty() {
-            enc_args.push("-map".to_string());
-            enc_args.push("1:a?".to_string());
+            if let Some(probe) = probe {
+                for track in &probe.audio_tracks {
+                    enc_args.push("-map".to_string());
+                    enc_args.push(format!("1:{}", track.index));
+                }
+            } else {
+                enc_args.push("-map".to_string());
+                enc_args.push("1:a?".to_string());
+            }
         } else {
             for track_index in &config.selected_audio_tracks {
                 enc_args.push("-map".to_string());
@@ -99,8 +130,15 @@ pub fn build_upscale_encode_args(
                 enc_args.push(format!("1:{track_index}"));
             }
         } else if !has_burn_subtitles {
-            enc_args.push("-map".to_string());
-            enc_args.push("1:s?".to_string());
+            if let Some(probe) = probe {
+                for track in &probe.subtitle_tracks {
+                    enc_args.push("-map".to_string());
+                    enc_args.push(format!("1:{}", track.index));
+                }
+            } else {
+                enc_args.push("-map".to_string());
+                enc_args.push("1:s?".to_string());
+            }
         }
     }
 
@@ -592,13 +630,14 @@ pub async fn run_upscale_worker(
         )));
     }
 
-    let enc_args = build_upscale_encode_args(
+    let enc_args = build_upscale_encode_args_with_probe(
         &output_frames_dir,
         &task.file_path,
         &output_path,
         fps,
         &task.config,
-        probe.pixel_format,
+        probe.pixel_format.clone(),
+        Some(&probe),
     );
 
     let (mut enc_rx, enc_child) = app

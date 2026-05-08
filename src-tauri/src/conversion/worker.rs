@@ -3,7 +3,7 @@ use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandEvent;
 use tokio::sync::mpsc;
 
-use crate::conversion::args::{build_ffmpeg_args, build_output_path};
+use crate::conversion::args::{build_ffmpeg_args_with_probe, build_output_path};
 use crate::conversion::error::ConversionError;
 use crate::conversion::manager::ManagerMessage;
 use crate::conversion::types::{
@@ -33,7 +33,13 @@ pub async fn run_ffmpeg_worker(
         &task.config.container,
         task.output_name.as_deref(),
     );
-    let args = build_ffmpeg_args(&task.file_path, &output_path, &task.config);
+
+    let probe = crate::conversion::probe::probe_media_file(&app, &task.file_path)
+        .await
+        .ok();
+
+    let args =
+        build_ffmpeg_args_with_probe(&task.file_path, &output_path, &task.config, probe.as_ref());
 
     let sidecar_command = app
         .shell()
@@ -71,12 +77,9 @@ pub async fn run_ffmpeg_worker(
             .as_deref()
             .and_then(parse_time)
             .unwrap_or(0.0);
-        let probe = crate::conversion::probe::probe_media_file(&app, &task.file_path)
-            .await
-            .ok();
         let full_duration = probe
-            .and_then(|p| p.duration)
-            .as_deref()
+            .as_ref()
+            .and_then(|p| p.duration.as_deref())
             .and_then(parse_time)
             .unwrap_or(0.0);
         let end_t = task
