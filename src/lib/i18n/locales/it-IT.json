@@ -228,7 +228,9 @@
 		"noActiveProcesses": "Nessun processo attivo",
 		"waitingForOutput": "Processo avviato, in attesa dell'output...",
 		"selectTask": "Selezionare un'attività per visualizzare l'output della console",
-		"scrollToBottom": "Scorri fino in fondo"
+		"scrollToBottom": "Scorri fino in fondo",
+		"copyAll": "Copy All",
+		"copied": "Copied!"
 	},
 	"update": {
 		"available": "Aggiornamento disponibile",

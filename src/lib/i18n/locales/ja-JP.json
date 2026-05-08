@@ -228,7 +228,9 @@
 		"noActiveProcesses": "アクティブなプロセスはありません",
 		"waitingForOutput": "プロセスが開始されました、出力を待機中...",
 		"selectTask": "コンソール出力を表示するタスクを選択してください",
-		"scrollToBottom": "下までスクロール"
+		"scrollToBottom": "下までスクロール",
+		"copyAll": "Copy All",
+		"copied": "Copied!"
 	},
 	"update": {
 		"available": "更新が利用可能です",

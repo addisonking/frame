@@ -228,7 +228,9 @@
 		"noActiveProcesses": "没有正在运行的进程",
 		"waitingForOutput": "进程已启动，等待输出...",
 		"selectTask": "选择一项任务以查看控制台输出",
-		"scrollToBottom": "滚动到底部"
+		"scrollToBottom": "滚动到底部",
+		"copyAll": "Copy All",
+		"copied": "Copied!"
 	},
 	"update": {
 		"available": "有可用更新",

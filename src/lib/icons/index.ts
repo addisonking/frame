@@ -1,6 +1,7 @@
 export { default as IconBookmark } from './components/IconBookmark.svelte';
 export { default as IconCaptions } from './components/IconCaptions.svelte';
 export { default as IconCheck } from './components/IconCheck.svelte';
+export { default as IconCopy } from './components/IconCopy.svelte';
 export { default as IconListChecks } from './components/IconListChecks.svelte';
 export { default as IconCrop } from './components/IconCrop.svelte';
 export { default as IconFileDown } from './components/IconFileDown.svelte';

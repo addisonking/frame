@@ -228,7 +228,9 @@
 		"noActiveProcesses": "Нет активных процессов",
 		"waitingForOutput": "Процесс запущен, ожидание результатов...",
 		"selectTask": "Выберите задачу, чтобы просмотреть вывод консоли",
-		"scrollToBottom": "Прокрутите вниз"
+		"scrollToBottom": "Прокрутите вниз",
+		"copyAll": "Copy All",
+		"copied": "Copied!"
 	},
 	"update": {
 		"available": "Доступно обновление",

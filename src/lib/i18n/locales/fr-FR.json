@@ -228,7 +228,9 @@
 		"noActiveProcesses": "Aucun processus actif",
 		"waitingForOutput": "Processus lancé, en attente du résultat...",
 		"selectTask": "Sélectionnez une tâche pour afficher la sortie de la console.",
-		"scrollToBottom": "Faire défiler vers le bas"
+		"scrollToBottom": "Faire défiler vers le bas",
+		"copyAll": "Copy All",
+		"copied": "Copied!"
 	},
 	"update": {
 		"available": "Mise à jour disponible",

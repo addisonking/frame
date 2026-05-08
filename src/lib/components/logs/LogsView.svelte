@@ -5,7 +5,7 @@
 	import VirtualList from '@humanspeak/svelte-virtual-list';
 	import type { SvelteVirtualListScrollOptions } from '@humanspeak/svelte-virtual-list';
 	import { tick, untrack } from 'svelte';
-	import { IconArrowDown } from '$lib/icons';
+	import { IconArrowDown, IconCopy, IconCheck } from '$lib/icons';
 	import { getHighlighter, highlightLogLineSync } from '$lib/services/shiki';
 	import type { HighlighterCore } from 'shiki/core';
 
@@ -43,6 +43,14 @@
 
 	let shouldStickToBottom = $state(true);
 	let wrapperDiv = $state<HTMLDivElement>();
+	let copied = $state(false);
+
+	async function copyLogs() {
+		if (!currentLogs.length) return;
+		await navigator.clipboard.writeText(currentLogs.join('\n'));
+		copied = true;
+		setTimeout(() => (copied = false), 2000);
+	}
 
 	function handleScroll(e: Event) {
 		const target = e.target as HTMLDivElement;
@@ -129,6 +137,23 @@
 				<span class="text-[10px] text-frame-gray-600">
 					{$_('logs.noActiveProcesses')}
 				</span>
+			{/if}
+
+			{#if activeFiles.length > 0}
+				<button
+					onclick={copyLogs}
+					disabled={currentLogs.length === 0}
+					class="ml-auto flex shrink-0 items-center gap-1 text-[10px] text-frame-gray-600 transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+					title={$_('logs.copyAll')}
+				>
+					{#if copied}
+						<IconCheck size={12} />
+						{$_('logs.copied')}
+					{:else}
+						<IconCopy size={12} />
+						{$_('logs.copyAll')}
+					{/if}
+				</button>
 			{/if}
 		</div>
 	</div>

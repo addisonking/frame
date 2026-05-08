@@ -228,7 +228,9 @@
 		"noActiveProcesses": "No active processes",
 		"waitingForOutput": "Process started, waiting for output...",
 		"selectTask": "Select a task to view console output",
-		"scrollToBottom": "Scroll to bottom"
+		"scrollToBottom": "Scroll to bottom",
+		"copyAll": "Copy All",
+		"copied": "Copied!"
 	},
 	"update": {
 		"available": "Update Available",

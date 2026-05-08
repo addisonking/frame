@@ -228,7 +228,9 @@
 		"noActiveProcesses": "Keine aktiven Prozesse",
 		"waitingForOutput": "Prozess gestartet, warte auf Ausgabe...",
 		"selectTask": "Wählen Sie eine Aufgabe aus, um die Konsolenausgabe anzuzeigen.",
-		"scrollToBottom": "Zum Ende scrollen"
+		"scrollToBottom": "Zum Ende scrollen",
+		"copyAll": "Copy All",
+		"copied": "Copied!"
 	},
 	"update": {
 		"available": "Update verfügbar",
