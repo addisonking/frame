@@ -2010,12 +2010,12 @@ impl FrameRoot {
         let source_path = file_item.path.clone();
         let source_name = file_item.name.clone();
 
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let rounded_ms = (position * 1000.0).round() as u64;
-        let hours = rounded_ms / 3_600_000;
-        let minutes = (rounded_ms % 3_600_000) / 60_000;
-        let seconds = (rounded_ms % 60_000) / 1000;
-        let ms = rounded_ms % 1000;
+        let duration = std::time::Duration::from_secs_f64(position.max(0.0));
+        let hours = duration.as_secs() / 3600;
+        let minutes = (duration.as_secs() % 3600) / 60;
+        let seconds = duration.as_secs() % 60;
+        let ms = duration.subsec_millis();
+
         let base_name = source_name
             .rsplit_once('.')
             .map_or(&source_name as &str, |(n, _)| n);
@@ -2025,13 +2025,16 @@ impl FrameRoot {
         let _ = session.command(crate::preview_engine::PreviewCommand::Pause);
 
         let dialog = export_frame_dialog(window, &default_name);
-        cx.spawn(async move |_this, cx| {
+        cx.spawn(async move |_this, _cx| {
             let Some(dest_path) = pick_export_frame_path(dialog).await else {
                 return;
             };
 
-            cx.background_executor()
-                .spawn(async move {
+            let dest_path_str = dest_path.to_string_lossy().into_owned();
+
+            if let Err(error) = std::thread::Builder::new()
+                .name("export-frame".to_string())
+                .spawn(move || {
                     let mut cmd = Command::new(ffmpeg_executable());
                     cmd.arg("-y")
                         .arg("-ss")
@@ -2040,11 +2043,31 @@ impl FrameRoot {
                         .arg(&source_path)
                         .arg("-frames:v")
                         .arg("1")
-                        .arg(dest_path);
+                        .arg(&dest_path_str);
 
-                    let _ = cmd.output();
+                    match cmd.output() {
+                        Ok(output) if output.status.success() => {
+                            let _ = notify_rust::Notification::new()
+                                .appname(crate::app_info::FRAME_APP_NAME)
+                                .summary("Frame Exported")
+                                .body(&format!("Saved to {}", dest_path_str))
+                                .icon("frame")
+                                .show();
+                        }
+                        Ok(output) => {
+                            eprintln!(
+                                "Failed to export frame: {}",
+                                String::from_utf8_lossy(&output.stderr)
+                            );
+                        }
+                        Err(error) => {
+                            eprintln!("Failed to spawn ffmpeg for frame export: {error}");
+                        }
+                    }
                 })
-                .await;
+            {
+                eprintln!("Failed to spawn frame export thread: {error}");
+            }
         })
         .detach();
     }
