@@ -1,11 +1,11 @@
 use super::*;
 use crate::app::preview_panel::preview_presented_frame;
 use crate::conversion_runner::core_config_from_gpui;
+use crate::native_dialogs::{export_frame_dialog, pick_export_frame_path};
 use crate::numeric::rounded_f64_to_u64;
 use crate::preview_engine::PreviewEngineError;
-use crate::settings::{AudioFiltersConfig, FilterValue, VideoFiltersConfig};
 use crate::runtime_binaries::ffmpeg_executable;
-use crate::native_dialogs::{export_frame_dialog, pick_export_frame_path};
+use crate::settings::{AudioFiltersConfig, FilterValue, VideoFiltersConfig};
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
@@ -1997,38 +1997,51 @@ impl FrameRoot {
             });
         self.settings_ui.active_tab = next_tab;
     }
-    pub(super) fn trigger_export_frame(&mut self, window: &Window, cx: &mut Context<Self>) {
-        let Some(session) = &self.preview_ui.session else { return; };
+    pub(super) fn trigger_export_frame(&self, window: &Window, cx: &Context<Self>) {
+        let Some(session) = &self.preview_ui.session else {
+            return;
+        };
         let snapshot = session.snapshot();
         let position = snapshot.playback.position_seconds;
-        
-        let Some(file_item) = self.file_queue.selected_file() else { return; };
+
+        let Some(file_item) = self.file_queue.selected_file() else {
+            return;
+        };
         let source_path = file_item.path.clone();
         let source_name = file_item.name.clone();
-        
+
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let rounded_ms = (position * 1000.0).round() as u64;
-        let hours = rounded_ms / 3600000;
-        let minutes = (rounded_ms % 3600000) / 60000;
-        let seconds = (rounded_ms % 60000) / 1000;
+        let hours = rounded_ms / 3_600_000;
+        let minutes = (rounded_ms % 3_600_000) / 60_000;
+        let seconds = (rounded_ms % 60_000) / 1000;
         let ms = rounded_ms % 1000;
-        let base_name = source_name.rsplit_once('.').map(|(n, _)| n).unwrap_or(&source_name);
-        let default_name = format!("{base_name}_frame_{hours:02}h{minutes:02}m{seconds:02}s{ms:03}ms.png");
-        
+        let base_name = source_name
+            .rsplit_once('.')
+            .map_or(&source_name as &str, |(n, _)| n);
+        let default_name =
+            format!("{base_name}_frame_{hours:02}h{minutes:02}m{seconds:02}s{ms:03}ms.png");
+
         let _ = session.command(crate::preview_engine::PreviewCommand::Pause);
-        
+
         let dialog = export_frame_dialog(window, &default_name);
         cx.spawn(async move |_this, cx| {
-            let Some(dest_path) = pick_export_frame_path(dialog).await else { return; };
-            
+            let Some(dest_path) = pick_export_frame_path(dialog).await else {
+                return;
+            };
+
             cx.background_executor()
                 .spawn(async move {
                     let mut cmd = Command::new(ffmpeg_executable());
                     cmd.arg("-y")
-                        .arg("-ss").arg(position.to_string())
-                        .arg("-i").arg(&source_path)
-                        .arg("-frames:v").arg("1")
+                        .arg("-ss")
+                        .arg(position.to_string())
+                        .arg("-i")
+                        .arg(&source_path)
+                        .arg("-frames:v")
+                        .arg("1")
                         .arg(dest_path);
-                    
+
                     let _ = cmd.output();
                 })
                 .await;
