@@ -184,10 +184,10 @@ pub async fn pick_export_frame_path(dialog: AsyncFileDialog) -> Option<PathBuf> 
 }
 
 #[must_use]
-pub fn export_frame_dialog(parent: &Window) -> AsyncFileDialog {
+pub fn export_frame_dialog(parent: &Window, default_name: &str) -> AsyncFileDialog {
     file_dialog_from_spec(EXPORT_FRAME_DIALOG_SPEC)
         .set_parent(parent)
-        .set_file_name("frame.png")
+        .set_file_name(default_name)
 }
 
 fn file_dialog_from_spec(spec: NativeDialogSpec) -> AsyncFileDialog {

@@ -2004,10 +2004,19 @@ impl FrameRoot {
         
         let Some(file_item) = self.file_queue.selected_file() else { return; };
         let source_path = file_item.path.clone();
+        let source_name = file_item.name.clone();
+        
+        let rounded_ms = (position * 1000.0).round() as u64;
+        let hours = rounded_ms / 3600000;
+        let minutes = (rounded_ms % 3600000) / 60000;
+        let seconds = (rounded_ms % 60000) / 1000;
+        let ms = rounded_ms % 1000;
+        let base_name = source_name.rsplit_once('.').map(|(n, _)| n).unwrap_or(&source_name);
+        let default_name = format!("{base_name}_frame_{hours:02}h{minutes:02}m{seconds:02}s{ms:03}ms.png");
         
         let _ = session.command(crate::preview_engine::PreviewCommand::Pause);
         
-        let dialog = export_frame_dialog(window);
+        let dialog = export_frame_dialog(window, &default_name);
         cx.spawn(async move |_this, cx| {
             let Some(dest_path) = pick_export_frame_path(dialog).await else { return; };
             
