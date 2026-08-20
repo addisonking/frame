@@ -4,9 +4,12 @@ use crate::conversion_runner::core_config_from_gpui;
 use crate::numeric::rounded_f64_to_u64;
 use crate::preview_engine::PreviewEngineError;
 use crate::settings::{AudioFiltersConfig, FilterValue, VideoFiltersConfig};
+use crate::runtime_binaries::ffmpeg_executable;
+use crate::native_dialogs::{export_frame_dialog, pick_export_frame_path};
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
+    process::Command,
 };
 
 impl FrameRoot {
@@ -1993,6 +1996,35 @@ impl FrameRoot {
                 resolve_active_settings_tab(self.settings_ui.active_tab, config, metadata)
             });
         self.settings_ui.active_tab = next_tab;
+    }
+    pub(super) fn trigger_export_frame(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let Some(session) = &self.preview_ui.session else { return; };
+        let snapshot = session.snapshot();
+        let position = snapshot.playback.position_seconds;
+        
+        let Some(file_item) = self.file_queue.selected_file() else { return; };
+        let source_path = file_item.path.clone();
+        
+        let _ = session.command(crate::preview_engine::PreviewCommand::Pause);
+        
+        let dialog = export_frame_dialog(window);
+        cx.spawn(async move |_this, cx| {
+            let Some(dest_path) = pick_export_frame_path(dialog).await else { return; };
+            
+            cx.background_executor()
+                .spawn(async move {
+                    let mut cmd = Command::new(ffmpeg_executable());
+                    cmd.arg("-y")
+                        .arg("-ss").arg(position.to_string())
+                        .arg("-i").arg(&source_path)
+                        .arg("-frames:v").arg("1")
+                        .arg(dest_path);
+                    
+                    let _ = cmd.output();
+                })
+                .await;
+        })
+        .detach();
     }
 }
 
